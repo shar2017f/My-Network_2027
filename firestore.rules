@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Connection testing
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    // Print Batches
+    match /batches/{batchId} {
+      allow read, write: if true;
+    }
+
+    // Sheet leaves
+    match /sheets/{sheetId} {
+      allow read, write: if true;
+    }
+
+    // Custody transfers
+    match /transfers/{transferId} {
+      allow read, write: if true;
+    }
+
+    // Outlets
+    match /outlets/{outletId} {
+      allow read, write: if true;
+    }
+
+    // Deliveries
+    match /deliveries/{deliveryId} {
+      allow read, write: if true;
+    }
+
+    // Payments
+    match /payments/{paymentId} {
+      allow read, write: if true;
+    }
+
+    // Direct Sales
+    match /direct_sales/{saleId} {
+      allow read, write: if true;
+    }
+
+    // Cash Handovers
+    match /cash_handovers/{handoverId} {
+      allow read, write: if true;
+    }
+
+    // Settlements
+    match /settlements/{settlementId} {
+      allow read, write: if true;
+    }
+
+    // Damaged Cards
+    match /damaged_cards/{damagedId} {
+      allow read, write: if true;
+    }
+
+    // Audit Logs
+    match /audit_logs/{logId} {
+      allow read, write: if true;
+    }
+
+    // App Settings
+    match /app_settings/{settingId} {
+      allow read, write: if true;
+    }
+
+    // System Data & Sync
+    match /system_data/{docId} {
+      allow read, write: if true;
+    }
+
+    // Live Snapshot Real-time Events
+    match /system_events/{eventId} {
+      allow read, write: if true;
+    }
+  }
+}

@@ -1,0 +1,280 @@
+{
+  "entities": {
+    "Batch": {
+      "title": "Batch",
+      "description": "Print batch record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "batchNumber": { "type": "number" },
+        "category": { "type": "string" },
+        "date": { "type": "string" },
+        "accountingMonth": { "type": "string" },
+        "sheetsCount": { "type": "number" },
+        "cardsPerSheet": { "type": "number" },
+        "totalCards": { "type": "number" },
+        "totalFaceValue": { "type": "number" },
+        "wholesaleSheetPrice": { "type": "number" },
+        "totalWholesaleValue": { "type": "number" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["id", "batchNumber", "category", "date", "accountingMonth", "sheetsCount", "totalCards", "wholesaleSheetPrice", "totalWholesaleValue"]
+    },
+    "Sheet": {
+      "title": "Sheet",
+      "description": "Leaf by leaf sheet record",
+      "type": "object",
+      "properties": {
+        "leafNumber": { "type": "number" },
+        "sheetCode": { "type": "string" },
+        "batchId": { "type": "string" },
+        "category": { "type": "string" },
+        "cardsCount": { "type": "number" },
+        "status": { "type": "string" },
+        "currentHolder": { "type": "string" },
+        "assignedOutletId": { "type": "string" },
+        "assignedOutletName": { "type": "string" },
+        "transferId": { "type": "string" },
+        "deliveryId": { "type": "string" },
+        "damageReason": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["leafNumber", "sheetCode", "batchId", "category", "cardsCount", "status", "currentHolder"]
+    },
+    "Transfer": {
+      "title": "Transfer",
+      "description": "Custody transfer from Admin to Distributor",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "category": { "type": "string" },
+        "sheetsCount": { "type": "number" },
+        "leafNumbers": { "type": "array" },
+        "sheetCodes": { "type": "array" },
+        "totalCards": { "type": "number" },
+        "totalWholesaleValue": { "type": "number" },
+        "notes": { "type": "string" },
+        "fromUser": { "type": "string" },
+        "toUser": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "date", "category", "sheetsCount", "totalCards", "totalWholesaleValue", "fromUser", "toUser"]
+    },
+    "Outlet": {
+      "title": "Outlet",
+      "description": "Customer outlet store with current debt and credit limit",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "phone": { "type": "string" },
+        "location": { "type": "string" },
+        "creditLimit": { "type": "number" },
+        "currentDebt": { "type": "number" },
+        "totalDeliveredAmount": { "type": "number" },
+        "totalPaidAmount": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "name", "ownerName", "phone", "creditLimit", "currentDebt"]
+    },
+    "Delivery": {
+      "title": "Delivery",
+      "description": "Delivery voucher to outlet",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "outletId": { "type": "string" },
+        "outletName": { "type": "string" },
+        "category": { "type": "string" },
+        "sheetsCount": { "type": "number" },
+        "sheetCodes": { "type": "array" },
+        "cardsCount": { "type": "number" },
+        "unitSheetPrice": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "cashPaidNow": { "type": "number" },
+        "remainingDebt": { "type": "number" },
+        "paymentStatus": { "type": "string" },
+        "deliveredBy": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "date", "outletId", "outletName", "category", "sheetsCount", "totalAmount", "remainingDebt", "paymentStatus", "deliveredBy"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Payment collection voucher from outlet",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "outletId": { "type": "string" },
+        "outletName": { "type": "string" },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "collectorName": { "type": "string" },
+        "previousDebt": { "type": "number" },
+        "newDebt": { "type": "number" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "date", "outletId", "outletName", "amount", "paymentMethod", "collectorName", "previousDebt", "newDebt"]
+    },
+    "DirectSale": {
+      "title": "DirectSale",
+      "description": "Direct individual card sale",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "category": { "type": "string" },
+        "cardsCount": { "type": "number" },
+        "unitCardPrice": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "isCredit": { "type": "boolean" },
+        "isPaid": { "type": "boolean" },
+        "soldBy": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "date", "customerName", "category", "cardsCount", "unitCardPrice", "totalAmount", "isCredit", "soldBy"]
+    },
+    "CashHandover": {
+      "title": "CashHandover",
+      "description": "Cash handover from distributor to admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "amount": { "type": "number" },
+        "fromUser": { "type": "string" },
+        "toUser": { "type": "string" },
+        "status": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "date", "amount", "fromUser", "toUser", "status"]
+    },
+    "Settlement": {
+      "title": "Settlement",
+      "description": "Settlement liquidation request",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "title": { "type": "string" },
+        "type": { "type": "string" },
+        "amount": { "type": "number" },
+        "sheetsCount": { "type": "number" },
+        "requestedBy": { "type": "string" },
+        "targetUser": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string" },
+        "reviewNotes": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "resolvedAt": { "type": "string" }
+      },
+      "required": ["id", "date", "title", "type", "requestedBy", "targetUser", "description", "status"]
+    },
+    "DamagedCard": {
+      "title": "DamagedCard",
+      "description": "Damaged or returned cards record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "category": { "type": "string" },
+        "sheetCode": { "type": "string" },
+        "cardsCount": { "type": "number" },
+        "reason": { "type": "string" },
+        "reportedBy": { "type": "string" },
+        "action": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "date", "category", "cardsCount", "reason", "reportedBy"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Audit log item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "actionType": { "type": "string" },
+        "actorName": { "type": "string" },
+        "actorRole": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "actionType", "actorName", "actorRole", "details", "timestamp"]
+    },
+    "AppSetting": {
+      "title": "AppSetting",
+      "description": "Application settings and permissions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "adminPin": { "type": "string" },
+        "permissions": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "adminPin"]
+    }
+  },
+  "firestore": {
+    "/batches/{batchId}": {
+      "schema": "Batch",
+      "description": "Print batches collection"
+    },
+    "/sheets/{sheetId}": {
+      "schema": "Sheet",
+      "description": "Individual sheets tracked leaf-by-leaf"
+    },
+    "/transfers/{transferId}": {
+      "schema": "Transfer",
+      "description": "Custody transfers from Admin to Distributor"
+    },
+    "/outlets/{outletId}": {
+      "schema": "Outlet",
+      "description": "Outlets with current balance and credit limit"
+    },
+    "/deliveries/{deliveryId}": {
+      "schema": "Delivery",
+      "description": "Deliveries to outlets"
+    },
+    "/payments/{paymentId}": {
+      "schema": "Payment",
+      "description": "Payments collected from outlets"
+    },
+    "/direct_sales/{saleId}": {
+      "schema": "DirectSale",
+      "description": "Direct individual card sales"
+    },
+    "/cash_handovers/{handoverId}": {
+      "schema": "CashHandover",
+      "description": "Cash handovers from distributor to admin"
+    },
+    "/settlements/{settlementId}": {
+      "schema": "Settlement",
+      "description": "Settlement requests between admin and distributor"
+    },
+    "/damaged_cards/{damagedId}": {
+      "schema": "DamagedCard",
+      "description": "Damaged or returned cards"
+    },
+    "/audit_logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "System audit trail"
+    },
+    "/app_settings/{settingId}": {
+      "schema": "AppSetting",
+      "description": "System settings and permissions"
+    }
+  }
+}

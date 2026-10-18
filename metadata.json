@@ -1,0 +1,6 @@
+{
+  "name": "قعزان نت - نظام إدارة ومحاسبة شبكة الكروت",
+  "description": "نظام إدارة ومحاسبة شبكة كروت الإنترنت قعزان نت (QAZAN-NET) للمسؤول والموزع الميداني",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

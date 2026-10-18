@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <!-- Loop protection Guard -->
+    <script>
+      (function() {
+        try {
+          // Prevent infinite automated page reload loops
+          var key = '__qazan_reload_guard';
+          var raw = sessionStorage.getItem(key);
+          var now = Date.now();
+          var data = raw ? JSON.parse(raw) : { count: 0, time: 0 };
+          
+          if (now - data.time < 8000) {
+            data.count += 1;
+          } else {
+            data.count = 1;
+          }
+          data.time = now;
+          sessionStorage.setItem(key, JSON.stringify(data));
+
+          if (data.count >= 2) {
+            console.warn('[QAZAN Guard] Blocked automated reload loop to keep page stable.');
+            // Intercept window.location.reload
+            var originalReload = window.location.reload.bind(window.location);
+            window.location.reload = function() {
+              console.warn('[QAZAN Guard] Automated location.reload call blocked.');
+            };
+          }
+        } catch (e) {
+          // Silent fallback
+        }
+      })();
+    </script>
+    <title>قعزان نت - نظام إدارة ومحاسبة شبكة الكروت</title>
+    <meta name="description" content="نظام إدارة ومحاسبة شبكة كروت الإنترنت قعزان نت (QAZAN-NET) للمسؤول والموزع الميداني" />
+    <meta property="og:title" content="قعزان نت - نظام إدارة ومحاسبة شبكة الكروت" />
+    <meta property="og:description" content="نظام إدارة ومحاسبة شبكة كروت الإنترنت قعزان نت (QAZAN-NET) للمسؤول والموزع الميداني" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="قعزان نت" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-slate-950 text-slate-100 font-sans antialiased selection:bg-amber-500 selection:text-slate-950">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
