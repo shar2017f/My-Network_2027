@@ -31,6 +31,7 @@ import { testFirestoreConnection } from '../firebase';
 import { ActiveTab } from '../components/Sidebar';
 import { onServiceWorkerSync, requestBackgroundSync } from '../services/serviceWorkerRegistration';
 import { getCategoryBatchNumber } from '../utils/batchNaming';
+import { safeStorage } from '../utils/safeStorage';
 
 export interface OfflineQueueItem {
   id: string;
@@ -209,7 +210,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Helper to safely load and parse JSON from localStorage without throwing
   const loadStored = <T,>(keySuffix: string, fallback: T): T => {
     try {
-      const saved = localStorage.getItem(STORAGE_PREFIX + keySuffix);
+      const saved = safeStorage.getItem(STORAGE_PREFIX + keySuffix);
       if (!saved || saved === 'undefined' || saved === 'null') return fallback;
       return JSON.parse(saved);
     } catch {
@@ -248,15 +249,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const urlParams = new URLSearchParams(window.location.search);
         const roleParam = urlParams.get('role');
         if (roleParam === 'distributor') {
-          localStorage.setItem(STORAGE_PREFIX + 'role', 'distributor');
+          safeStorage.setItem(STORAGE_PREFIX + 'role', 'distributor');
           return 'distributor';
         }
         if (roleParam === 'admin') {
-          localStorage.setItem(STORAGE_PREFIX + 'role', 'admin');
+          safeStorage.setItem(STORAGE_PREFIX + 'role', 'admin');
           return 'admin';
         }
       }
-      return (localStorage.getItem(STORAGE_PREFIX + 'role') as UserRole) || 'admin';
+      return (safeStorage.getItem(STORAGE_PREFIX + 'role') as UserRole) || 'admin';
     } catch {
       return 'admin';
     }
@@ -264,7 +265,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [adminPin, setAdminPinState] = useState<string>(() => {
     try {
-      return localStorage.getItem(STORAGE_PREFIX + 'admin_pin') || '1234';
+      return safeStorage.getItem(STORAGE_PREFIX + 'admin_pin') || '1234';
     } catch {
       return '1234';
     }
@@ -272,7 +273,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [distributorPin, setDistributorPinState] = useState<string>(() => {
     try {
-      return localStorage.getItem(STORAGE_PREFIX + 'distributor_pin') || '0000';
+      return safeStorage.getItem(STORAGE_PREFIX + 'distributor_pin') || '0000';
     } catch {
       return '0000';
     }
@@ -280,7 +281,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [isDistributorSetupDone, setIsDistributorSetupDoneState] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(STORAGE_PREFIX + 'distributor_setup_done') === 'true';
+      return safeStorage.getItem(STORAGE_PREFIX + 'distributor_setup_done') === 'true';
     } catch {
       return false;
     }
@@ -298,7 +299,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return true;
         }
         if (roleParam === 'distributor') {
-          const isDone = localStorage.getItem(STORAGE_PREFIX + 'distributor_setup_done') === 'true';
+          const isDone = safeStorage.getItem(STORAGE_PREFIX + 'distributor_setup_done') === 'true';
           return !isDone;
         }
       }
@@ -448,7 +449,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setOfflineQueue((prev) => {
       const updated = [newItem, ...prev];
       try {
-        localStorage.setItem(STORAGE_PREFIX + 'offline_queue', JSON.stringify(updated));
+        safeStorage.setItem(STORAGE_PREFIX + 'offline_queue', JSON.stringify(updated));
       } catch {}
       return updated;
     });
@@ -461,7 +462,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const allSynced = prev.map((d) => ({ ...d, syncedToCloud: true }));
       deliveriesRef.current = allSynced;
       try {
-        localStorage.setItem(STORAGE_PREFIX + 'deliveries', JSON.stringify(allSynced));
+        safeStorage.setItem(STORAGE_PREFIX + 'deliveries', JSON.stringify(allSynced));
       } catch {}
       return allSynced;
     });
@@ -469,7 +470,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const allSynced = prev.map((p) => ({ ...p, syncedToCloud: true }));
       paymentsRef.current = allSynced;
       try {
-        localStorage.setItem(STORAGE_PREFIX + 'payments', JSON.stringify(allSynced));
+        safeStorage.setItem(STORAGE_PREFIX + 'payments', JSON.stringify(allSynced));
       } catch {}
       return allSynced;
     });
@@ -482,7 +483,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (ok) {
         setOfflineQueue([]);
         try {
-          localStorage.removeItem(STORAGE_PREFIX + 'offline_queue');
+          safeStorage.removeItem(STORAGE_PREFIX + 'offline_queue');
         } catch {}
         markDeliveriesAsSynced();
         addAudit('CLOUD_SYNC', 'تمت مزامنة جميع العمليات المنفذة أوفلاين مع السحابة بنجاح');
@@ -507,7 +508,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Alert threshold in minutes for unsynced deliveries (default: 2 minutes)
   const [unsyncedDeliveryAlertMinutes, setUnsyncedDeliveryAlertMinutesState] = useState<number>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_PREFIX + 'unsynced_threshold');
+      const saved = safeStorage.getItem(STORAGE_PREFIX + 'unsynced_threshold');
       return saved ? Number(saved) : 2;
     } catch {
       return 2;
@@ -517,7 +518,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setUnsyncedDeliveryAlertMinutes = (mins: number) => {
     setUnsyncedDeliveryAlertMinutesState(mins);
     try {
-      localStorage.setItem(STORAGE_PREFIX + 'unsynced_threshold', String(mins));
+      safeStorage.setItem(STORAGE_PREFIX + 'unsynced_threshold', String(mins));
     } catch {}
   };
 
@@ -630,7 +631,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       batchesRef.current = mergedBatches;
       setBatches(mergedBatches);
       try {
-        localStorage.setItem(STORAGE_PREFIX + 'batches', JSON.stringify(mergedBatches));
+        safeStorage.setItem(STORAGE_PREFIX + 'batches', JSON.stringify(mergedBatches));
       } catch {}
 
       // 2. Outlets: smart union & financial activity preservation
@@ -676,7 +677,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       outletsRef.current = mergedOutlets;
       setOutlets(mergedOutlets);
       try {
-        localStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(mergedOutlets));
+        safeStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(mergedOutlets));
       } catch {}
 
       // 3. Sheets: status progression priority (delivered_outlet > with_distributor > with_admin > in_print)
@@ -723,7 +724,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       sheetsRef.current = mergedSheets;
       setSheets(mergedSheets);
       try {
-        localStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(mergedSheets));
+        safeStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(mergedSheets));
       } catch {}
 
       // 4. Transfers: union by ID
@@ -743,7 +744,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       transfersRef.current = mergedTransfers;
       setTransfers(mergedTransfers);
       try {
-        localStorage.setItem(STORAGE_PREFIX + 'transfers', JSON.stringify(mergedTransfers));
+        safeStorage.setItem(STORAGE_PREFIX + 'transfers', JSON.stringify(mergedTransfers));
       } catch {}
 
       // 5. Deliveries (سندات التوريد والتسليم): union by ID - never delete local deliveries!
@@ -767,7 +768,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       deliveriesRef.current = mergedDeliveries;
       setDeliveries(mergedDeliveries);
       try {
-        localStorage.setItem(STORAGE_PREFIX + 'deliveries', JSON.stringify(mergedDeliveries));
+        safeStorage.setItem(STORAGE_PREFIX + 'deliveries', JSON.stringify(mergedDeliveries));
       } catch {}
 
       // 6. Payments (سندات القبض والاستلام): union by ID - never delete local payments!
@@ -791,7 +792,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       paymentsRef.current = mergedPayments;
       setPayments(mergedPayments);
       try {
-        localStorage.setItem(STORAGE_PREFIX + 'payments', JSON.stringify(mergedPayments));
+        safeStorage.setItem(STORAGE_PREFIX + 'payments', JSON.stringify(mergedPayments));
       } catch {}
 
       // 7. Direct Sales: union by ID
@@ -813,7 +814,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       directSalesRef.current = mergedDirectSales;
       setDirectSales(mergedDirectSales);
       try {
-        localStorage.setItem(STORAGE_PREFIX + 'directSales', JSON.stringify(mergedDirectSales));
+        safeStorage.setItem(STORAGE_PREFIX + 'directSales', JSON.stringify(mergedDirectSales));
       } catch {}
 
       // 8. Cash Handovers: union by ID
@@ -835,7 +836,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       cashHandoversRef.current = mergedCashHandovers;
       setCashHandovers(mergedCashHandovers);
       try {
-        localStorage.setItem(STORAGE_PREFIX + 'cashHandovers', JSON.stringify(mergedCashHandovers));
+        safeStorage.setItem(STORAGE_PREFIX + 'cashHandovers', JSON.stringify(mergedCashHandovers));
       } catch {}
 
       // 9. Settlements: union by ID
@@ -857,7 +858,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       settlementsRef.current = mergedSettlements;
       setSettlements(mergedSettlements);
       try {
-        localStorage.setItem(STORAGE_PREFIX + 'settlements', JSON.stringify(mergedSettlements));
+        safeStorage.setItem(STORAGE_PREFIX + 'settlements', JSON.stringify(mergedSettlements));
       } catch {}
 
       // 10. Damaged Cards: union by ID
@@ -879,7 +880,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       damagedCardsRef.current = mergedDamagedCards;
       setDamagedCards(mergedDamagedCards);
       try {
-        localStorage.setItem(STORAGE_PREFIX + 'damagedCards', JSON.stringify(mergedDamagedCards));
+        safeStorage.setItem(STORAGE_PREFIX + 'damagedCards', JSON.stringify(mergedDamagedCards));
       } catch {}
 
       // 11. Audit Logs: union by ID
@@ -901,27 +902,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       auditLogsRef.current = mergedAuditLogs;
       setAuditLogs(mergedAuditLogs);
       try {
-        localStorage.setItem(STORAGE_PREFIX + 'auditLogs', JSON.stringify(mergedAuditLogs));
+        safeStorage.setItem(STORAGE_PREFIX + 'auditLogs', JSON.stringify(mergedAuditLogs));
       } catch {}
 
       if (remoteState.permissions) {
         setPermissions(remoteState.permissions);
         try {
-          localStorage.setItem(STORAGE_PREFIX + 'permissions', JSON.stringify(remoteState.permissions));
+          safeStorage.setItem(STORAGE_PREFIX + 'permissions', JSON.stringify(remoteState.permissions));
         } catch {}
       }
 
       if (remoteState.adminPin) {
         setAdminPinState(remoteState.adminPin);
         try {
-          localStorage.setItem(STORAGE_PREFIX + 'admin_pin', remoteState.adminPin);
+          safeStorage.setItem(STORAGE_PREFIX + 'admin_pin', remoteState.adminPin);
         } catch {}
       }
 
       if (remoteState.distributorPin) {
         setDistributorPinState(remoteState.distributorPin);
         try {
-          localStorage.setItem(STORAGE_PREFIX + 'distributor_pin', remoteState.distributorPin);
+          safeStorage.setItem(STORAGE_PREFIX + 'distributor_pin', remoteState.distributorPin);
         } catch {}
       }
 
@@ -1021,67 +1022,67 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Save to localStorage whenever state changes
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'role', currentRole);
+    safeStorage.setItem(STORAGE_PREFIX + 'role', currentRole);
   }, [currentRole]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'admin_pin', adminPin);
+    safeStorage.setItem(STORAGE_PREFIX + 'admin_pin', adminPin);
   }, [adminPin]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'batches', JSON.stringify(batches));
+    safeStorage.setItem(STORAGE_PREFIX + 'batches', JSON.stringify(batches));
   }, [batches]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(sheets));
+    safeStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(sheets));
   }, [sheets]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'transfers', JSON.stringify(transfers));
+    safeStorage.setItem(STORAGE_PREFIX + 'transfers', JSON.stringify(transfers));
   }, [transfers]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(outlets));
+    safeStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(outlets));
   }, [outlets]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'deliveries', JSON.stringify(deliveries));
+    safeStorage.setItem(STORAGE_PREFIX + 'deliveries', JSON.stringify(deliveries));
   }, [deliveries]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'payments', JSON.stringify(payments));
+    safeStorage.setItem(STORAGE_PREFIX + 'payments', JSON.stringify(payments));
   }, [payments]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'directSales', JSON.stringify(directSales));
+    safeStorage.setItem(STORAGE_PREFIX + 'directSales', JSON.stringify(directSales));
   }, [directSales]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'cashHandovers', JSON.stringify(cashHandovers));
+    safeStorage.setItem(STORAGE_PREFIX + 'cashHandovers', JSON.stringify(cashHandovers));
   }, [cashHandovers]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'settlements', JSON.stringify(settlements));
+    safeStorage.setItem(STORAGE_PREFIX + 'settlements', JSON.stringify(settlements));
   }, [settlements]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'damagedCards', JSON.stringify(damagedCards));
+    safeStorage.setItem(STORAGE_PREFIX + 'damagedCards', JSON.stringify(damagedCards));
   }, [damagedCards]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'auditLogs', JSON.stringify(auditLogs));
+    safeStorage.setItem(STORAGE_PREFIX + 'auditLogs', JSON.stringify(auditLogs));
   }, [auditLogs]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'notifications', JSON.stringify(notifications));
+    safeStorage.setItem(STORAGE_PREFIX + 'notifications', JSON.stringify(notifications));
   }, [notifications]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'permissions', JSON.stringify(permissions));
+    safeStorage.setItem(STORAGE_PREFIX + 'permissions', JSON.stringify(permissions));
   }, [permissions]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + 'critical_thresholds', JSON.stringify(criticalThresholds));
+    safeStorage.setItem(STORAGE_PREFIX + 'critical_thresholds', JSON.stringify(criticalThresholds));
   }, [criticalThresholds]);
 
   // Financial and Inventory KPIs
@@ -1370,7 +1371,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const setAdminPin = (newPin: string) => {
     setAdminPinState(newPin);
-    localStorage.setItem(STORAGE_PREFIX + 'admin_pin', newPin);
+    safeStorage.setItem(STORAGE_PREFIX + 'admin_pin', newPin);
     pushStateToCloud({ adminPin: newPin });
     addAudit('SYSTEM_RESET', 'تم تغيير الرمز السري (PIN) للمسؤول');
     soundService.playSuccess();
@@ -1382,7 +1383,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const setDistributorPin = (newPin: string) => {
     setDistributorPinState(newPin);
-    localStorage.setItem(STORAGE_PREFIX + 'distributor_pin', newPin);
+    safeStorage.setItem(STORAGE_PREFIX + 'distributor_pin', newPin);
     pushStateToCloud({ distributorPin: newPin });
     addAudit('PERMISSIONS_UPDATED', `تم تعيين رمز PIN شخصي جديد للموزع الميداني (${newPin})`);
     soundService.playSuccess();
@@ -1390,7 +1391,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const setDistributorSetupDone = (done: boolean) => {
     setIsDistributorSetupDoneState(done);
-    localStorage.setItem(STORAGE_PREFIX + 'distributor_setup_done', done ? 'true' : 'false');
+    safeStorage.setItem(STORAGE_PREFIX + 'distributor_setup_done', done ? 'true' : 'false');
   };
 
   // 1. Add Batch
@@ -1469,8 +1470,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setBatches(updatedBatches);
     setSheets(updatedSheets);
     try {
-      localStorage.setItem(STORAGE_PREFIX + 'batches', JSON.stringify(updatedBatches));
-      localStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(updatedSheets));
+      safeStorage.setItem(STORAGE_PREFIX + 'batches', JSON.stringify(updatedBatches));
+      safeStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(updatedSheets));
     } catch (e) {
       console.warn('LocalStorage error:', e);
     }
@@ -1602,8 +1603,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setTransfers(updatedTransfers);
     try {
-      localStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(updatedSheets));
-      localStorage.setItem(STORAGE_PREFIX + 'transfers', JSON.stringify(updatedTransfers));
+      safeStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(updatedSheets));
+      safeStorage.setItem(STORAGE_PREFIX + 'transfers', JSON.stringify(updatedTransfers));
     } catch {}
     pushStateToCloud({ sheets: updatedSheets, transfers: updatedTransfers });
 
@@ -1733,9 +1734,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setDeliveries(updatedDeliveries);
 
     try {
-      localStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(updatedSheets));
-      localStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(updatedOutlets));
-      localStorage.setItem(STORAGE_PREFIX + 'deliveries', JSON.stringify(updatedDeliveries));
+      safeStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(updatedSheets));
+      safeStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(updatedOutlets));
+      safeStorage.setItem(STORAGE_PREFIX + 'deliveries', JSON.stringify(updatedDeliveries));
     } catch {}
 
     pushStateToCloud({ sheets: updatedSheets, outlets: updatedOutlets, deliveries: updatedDeliveries }).then((ok) => {
@@ -1744,7 +1745,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const marked = prev.map((d) => (d.id === deliveryId ? { ...d, syncedToCloud: true } : d));
           deliveriesRef.current = marked;
           try {
-            localStorage.setItem(STORAGE_PREFIX + 'deliveries', JSON.stringify(marked));
+            safeStorage.setItem(STORAGE_PREFIX + 'deliveries', JSON.stringify(marked));
           } catch {}
           return marked;
         });
@@ -1837,8 +1838,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setPayments(updatedPayments);
 
     try {
-      localStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(updatedOutlets));
-      localStorage.setItem(STORAGE_PREFIX + 'payments', JSON.stringify(updatedPayments));
+      safeStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(updatedOutlets));
+      safeStorage.setItem(STORAGE_PREFIX + 'payments', JSON.stringify(updatedPayments));
     } catch {}
     pushStateToCloud({ outlets: updatedOutlets, payments: updatedPayments });
 
@@ -1912,7 +1913,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     directSalesRef.current = updatedSales;
     setDirectSales(updatedSales);
     try {
-      localStorage.setItem(STORAGE_PREFIX + 'directSales', JSON.stringify(updatedSales));
+      safeStorage.setItem(STORAGE_PREFIX + 'directSales', JSON.stringify(updatedSales));
     } catch {}
     pushStateToCloud({ directSales: updatedSales });
 
@@ -1945,7 +1946,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     cashHandoversRef.current = updatedHandovers;
     setCashHandovers(updatedHandovers);
     try {
-      localStorage.setItem(STORAGE_PREFIX + 'cashHandovers', JSON.stringify(updatedHandovers));
+      safeStorage.setItem(STORAGE_PREFIX + 'cashHandovers', JSON.stringify(updatedHandovers));
     } catch {}
     pushStateToCloud({ cashHandovers: updatedHandovers });
 
@@ -1980,7 +1981,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     cashHandoversRef.current = updatedHandovers;
     setCashHandovers(updatedHandovers);
     try {
-      localStorage.setItem(STORAGE_PREFIX + 'cashHandovers', JSON.stringify(updatedHandovers));
+      safeStorage.setItem(STORAGE_PREFIX + 'cashHandovers', JSON.stringify(updatedHandovers));
     } catch {}
     pushStateToCloud({ cashHandovers: updatedHandovers });
 
@@ -2058,7 +2059,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     settlementsRef.current = updatedSettlements;
     setSettlements(updatedSettlements);
     try {
-      localStorage.setItem(STORAGE_PREFIX + 'settlements', JSON.stringify(updatedSettlements));
+      safeStorage.setItem(STORAGE_PREFIX + 'settlements', JSON.stringify(updatedSettlements));
     } catch {}
     pushStateToCloud({ settlements: updatedSettlements });
 
@@ -2093,7 +2094,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     settlementsRef.current = updatedSettlements;
     setSettlements(updatedSettlements);
     try {
-      localStorage.setItem(STORAGE_PREFIX + 'settlements', JSON.stringify(updatedSettlements));
+      safeStorage.setItem(STORAGE_PREFIX + 'settlements', JSON.stringify(updatedSettlements));
     } catch {}
     pushStateToCloud({ settlements: updatedSettlements });
 
@@ -2156,8 +2157,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     damagedCardsRef.current = updatedDamages;
     setDamagedCards(updatedDamages);
     try {
-      if (sheetCode) localStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(updatedSheets));
-      localStorage.setItem(STORAGE_PREFIX + 'damagedCards', JSON.stringify(updatedDamages));
+      if (sheetCode) safeStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(updatedSheets));
+      safeStorage.setItem(STORAGE_PREFIX + 'damagedCards', JSON.stringify(updatedDamages));
     } catch {}
     pushStateToCloud({ sheets: updatedSheets, damagedCards: updatedDamages });
 
@@ -2188,7 +2189,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     outletsRef.current = updated;
     setOutlets(updated);
     try {
-      localStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(updated));
+      safeStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(updated));
     } catch {}
     pushStateToCloud({ outlets: updated });
 
@@ -2209,7 +2210,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     outletsRef.current = updated;
     setOutlets(updated);
     try {
-      localStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(updated));
+      safeStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(updated));
     } catch {}
     pushStateToCloud({ outlets: updated });
     addAudit('OUTLET_UPDATED', `تم تحديث بيانات المنفذ "${targetName || id}" ومزامنتها في قاعدة البيانات السحابية`);
@@ -2232,7 +2233,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     outletsRef.current = updated;
     setOutlets(updated);
     try {
-      localStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(updated));
+      safeStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(updated));
     } catch {}
     pushStateToCloud({ outlets: updated });
     addAudit('SYSTEM_RESET', `تم حذف المنفذ "${target.name}"`);

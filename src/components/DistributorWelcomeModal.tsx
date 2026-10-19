@@ -48,6 +48,7 @@ export const DistributorWelcomeModal: React.FC<DistributorWelcomeModalProps> = (
   const [pinSaved, setPinSaved] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [showInstallHint, setShowInstallHint] = useState(false);
 
   // Listen for beforeinstallprompt event if available
   React.useEffect(() => {
@@ -105,10 +106,7 @@ export const DistributorWelcomeModal: React.FC<DistributorWelcomeModalProps> = (
       }
       setDeferredPrompt(null);
     } else {
-      // Show instructional hint for manual PWA install
-      alert(
-        'لتثبيت التطبيق على هاتفك:\n- على أندرويد (Chrome): اضغط على القائمة (⋮) ثم اختر "إضافة إلى الشاشة الرئيسية" أو "تثبيت التطبيق".\n- على آيفون (Safari): اضغط على زر المشاركة (مربع بسهم لأعلى) ثم اختر "إضافة إلى الشاشة الرئيسية".'
-      );
+      setShowInstallHint((prev) => !prev);
     }
   };
 
@@ -442,6 +440,18 @@ export const DistributorWelcomeModal: React.FC<DistributorWelcomeModalProps> = (
                     <span>{isInstalled ? '✓ التطبيق مثبت بالفعل على جهازك' : 'تثبيت التطبيق على الشاشة الرئيسية الآن'}</span>
                   </button>
                 </div>
+
+                {showInstallHint && (
+                  <div className="mt-3 p-3.5 bg-slate-900 border border-emerald-500/30 rounded-2xl text-xs text-slate-300 space-y-1.5 text-right animate-in fade-in">
+                    <p className="font-bold text-emerald-400">طريقة تثبيت التطبيق على هاتفك:</p>
+                    <p className="text-[11px] leading-relaxed">
+                      • <strong className="text-white">أندرويد (Chrome):</strong> اضغط على قائمة المتصفح (⋮) ثم اختر <span className="text-amber-400">"إضافة إلى الشاشة الرئيسية"</span> أو <span className="text-amber-400">"تثبيت التطبيق"</span>.
+                    </p>
+                    <p className="text-[11px] leading-relaxed">
+                      • <strong className="text-white">آيفون (Safari):</strong> اضغط على زر المشاركة (المربع بسهم لأعلى) ثم اختر <span className="text-amber-400">"إضافة إلى الشاشة الرئيسية"</span>.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Security & Summary Box */}

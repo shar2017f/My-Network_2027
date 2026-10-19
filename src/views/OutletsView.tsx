@@ -42,6 +42,7 @@ import {
   formatSheetCodeWithBatch,
   getBatchOrdinalName,
   getCategoryBatchNumber,
+  ORDINAL_ARABIC,
 } from '../utils/batchNaming';
 
 // Helper to format Arabic date with day of week
@@ -132,6 +133,7 @@ export const OutletsView: React.FC = () => {
   );
   const [deliveryCashPaid, setDeliveryCashPaid] = useState(0);
   const [deliveryNotes, setDeliveryNotes] = useState('');
+  const [deliveryError, setDeliveryError] = useState('');
 
   // Payment Form State
   const [paymentTargetOutletId, setPaymentTargetOutletId] = useState('');
@@ -155,7 +157,7 @@ export const OutletsView: React.FC = () => {
     >();
     custodySheets.forEach((s) => {
       const bInfo = batches.find((b) => b.id === s.batchId);
-      const catBNum = s.categoryBatchNumber || (bInfo ? getCategoryBatchNumber(bInfo, batches) : (bInfo?.batchNumber || 1));
+      const catBNum = s.categoryBatchNumber || (bInfo ? getCategoryBatchNumber(bInfo, batches) : 1);
       if (!batchMap.has(s.batchId)) {
         batchMap.set(s.batchId, {
           batchId: s.batchId,
@@ -203,7 +205,7 @@ export const OutletsView: React.FC = () => {
     availableSheetsForDelivery.forEach((s) => {
       if (!map.has(s.batchId)) {
         const bInfo = batches.find((b) => b.id === s.batchId);
-        const catBNum = s.categoryBatchNumber || (bInfo ? getCategoryBatchNumber(bInfo, batches) : (bInfo?.batchNumber || 1));
+        const catBNum = s.categoryBatchNumber || (bInfo ? getCategoryBatchNumber(bInfo, batches) : 1);
         map.set(s.batchId, {
           batchId: s.batchId,
           batchName: getBatchOrdinalName(catBNum),
@@ -234,6 +236,7 @@ export const OutletsView: React.FC = () => {
     setRangeBatchId('all');
     setRangeFrom('');
     setRangeTo('');
+    setDeliveryError('');
     setDeliveryUnitPrice(CARD_CATEGORIES_CONFIG['200'].defaultWholesaleSheetPrice);
 
     const avSheets = sheets.filter(
@@ -417,12 +420,9 @@ export const OutletsView: React.FC = () => {
       setEditOutletError(`لا يمكن حذف المنفذ لوجود مديونية قائمة قدرها ${outlet.currentDebt.toLocaleString()} ر.ي. يرجى تصفير الحساب أولاً.`);
       return;
     }
-    const confirmed = window.confirm(`هل أنت متأكد من حذف المنفذ "${outlet.name}" نهائياً من قاعدة البيانات السحابية؟`);
-    if (confirmed) {
-      deleteOutlet(outlet.id);
-      setIsEditOutletOpen(false);
-      setEditingOutlet(null);
-    }
+    deleteOutlet(outlet.id);
+    setIsEditOutletOpen(false);
+    setEditingOutlet(null);
   };
 
   // Submit Delivery (DEL)
@@ -435,9 +435,10 @@ export const OutletsView: React.FC = () => {
       finalCodes = availableSheetsForDelivery.slice(0, Number(deliverySheetsCount)).map((s) => s.sheetCode);
     }
     if (finalCodes.length === 0) {
-      alert('يرجى تحديد شيت واحد على الأقل لتوريده');
+      setDeliveryError('يرجى تحديد شيت واحد على الأقل من القائمة لتوريده للمنفذ');
       return;
     }
+    setDeliveryError('');
 
     const voucher = createDelivery({
       outletId: deliveryTargetOutletId,
@@ -1615,6 +1616,12 @@ export const OutletsView: React.FC = () => {
             </div>
 
             <form onSubmit={handleDeliverySubmit} className="space-y-4 overflow-y-auto pr-1 flex-1">
+              {deliveryError && (
+                <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-bold flex items-center gap-2 animate-in fade-in">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{deliveryError}</span>
+                </div>
+              )}
               {/* 1. DATE SECTION - Added with high prominence */}
               <div className="bg-slate-950 p-3.5 rounded-2xl border border-blue-500/30 space-y-2.5">
                 <div className="flex items-center justify-between">
@@ -1752,6 +1759,13 @@ export const OutletsView: React.FC = () => {
                   })}
                 </div>
               </div>
+
+              {deliveryError && (
+                <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{deliveryError}</span>
+                </div>
+              )}
 
               {/* 4. BATCH & SHEET NUMBERS SELECTOR (خيار رقم الشيت الموزع له من الدفعة) */}
               <div className="bg-slate-950 p-3.5 rounded-2xl border border-emerald-500/30 space-y-3">

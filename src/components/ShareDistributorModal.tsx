@@ -70,7 +70,17 @@ export const ShareDistributorModal: React.FC<ShareDistributorModalProps> = ({
   const handleWhatsAppShare = () => {
     const text = `مرحباً بك في شبكة قعزان نت 🌐\n\nإليك رابط حسابك المخصص كموزع ميداني لإدارة كروت الإنترنت، توريد السندات للمحلات، وتحصيل المبالغ النقدية مباشرة:\n\n🔗 الرابط المباشر:\n${distributorUrl}\n\n🔑 رمز الدخول المبدئي المؤقت: ${distributorPin || '0000'}\n(عند فتح الرابط ستظهر لك شاشة ترحيب تطلب منك تعيين رمز PIN شخصي مكون من 4 أرقام خاص بك لحماية حسابك).\n\n📲 ملاحظة: بعد فتح الرابط، اضغط على زر "تثبيت التطبيق على الشاشة الرئيسية" ليصبح كأيقونة تطبيق أندرويد/آيفون على جوالك.`;
     const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
-    window.open(whatsappUrl, '_blank');
+    try {
+      const a = document.createElement('a');
+      a.href = whatsappUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch {
+      window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+    }
   };
 
   const handleSwitchToDistributor = () => {

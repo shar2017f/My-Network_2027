@@ -1,5 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
+import { safeStorage } from '../utils/safeStorage';
 
 interface Props {
   children: ReactNode;
@@ -32,19 +33,20 @@ export class ErrorBoundary extends Component<Props, State> {
   };
 
   private handleReload = () => {
-    window.location.reload();
+    try {
+      window.location.reload();
+    } catch {
+      window.location.href = window.location.href;
+    }
   };
 
   private handleClearAndReload = () => {
+    safeStorage.clearWithPrefix('qnet_2026_');
     try {
-      // Clear local storage cache keys so fresh cloud data is downloaded
-      Object.keys(localStorage).forEach((key) => {
-        if (key.startsWith('qnet_2026_')) {
-          localStorage.removeItem(key);
-        }
-      });
-    } catch {}
-    window.location.reload();
+      window.location.reload();
+    } catch {
+      window.location.href = window.location.href;
+    }
   };
 
   public render() {

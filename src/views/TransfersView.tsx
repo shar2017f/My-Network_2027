@@ -19,6 +19,7 @@ import { CARD_CATEGORIES_CONFIG } from '../constants/cardConfig';
 import {
   formatSheetWithBatch,
   formatSheetBadge,
+  formatSheetListGrouped,
   getBatchOrdinalName,
   getCategoryBatchNumber,
   ORDINAL_ARABIC,
@@ -46,7 +47,7 @@ export const TransfersView: React.FC = () => {
     const map = new Map<string, { batchId: string; batchNumber: number; categoryBatchNumber: number; batchName: string; count: number; date: string }>();
     adminSheets.forEach((s) => {
       const b = batches.find((x) => x.id === s.batchId);
-      const catBNum = s.categoryBatchNumber || (b ? getCategoryBatchNumber(b, batches) : (b?.batchNumber || 1));
+      const catBNum = s.categoryBatchNumber || (b ? getCategoryBatchNumber(b, batches) : 1);
       if (!map.has(s.batchId)) {
         map.set(s.batchId, {
           batchId: s.batchId,
@@ -252,15 +253,13 @@ export const TransfersView: React.FC = () => {
                     {tr.sheetCodes && tr.sheetCodes.length > 0 ? (
                       tr.sheetCodes.map((code) => {
                         const s = sheets.find((x) => x.sheetCode === code);
-                        const bNum = s?.batchNumber || parseInt(code.match(/B(\d+)/)?.[1] || '1', 10);
-                        const leafNum = s?.leafNumber || parseInt(code.match(/S(\d+)/)?.[1] || '1', 10);
                         return (
                           <span
                             key={code}
-                            className="text-[10px] px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 font-mono"
+                            className="text-[10px] px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 font-mono font-bold"
                             title={code}
                           >
-                            شيت #{leafNum} (د#{bNum})
+                            {s ? formatSheetBadge(s, undefined, batches) : `شيت #${code.match(/S(\d+)/)?.[1] || '1'}`}
                           </span>
                         );
                       })
@@ -424,23 +423,28 @@ export const TransfersView: React.FC = () => {
 
               {/* Selected Summary */}
               {selectedSheetCodes.length > 0 && (
-                <div className="p-3 rounded-xl bg-slate-950 border border-emerald-500/30 flex items-center justify-between text-xs">
-                  <div>
-                    <span className="text-slate-400 text-[10px] block">الشيتات المحددة للتحويل:</span>
-                    <span className="font-extrabold text-white">
-                      {selectedSheetCodes.length} شيت (
-                      {selectedSheetCodes.length * CARD_CATEGORIES_CONFIG[selectedCategory].defaultCardsPerSheet} كرت)
-                    </span>
+                <div className="p-3 rounded-xl bg-slate-950 border border-emerald-500/30 space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-slate-400 text-[10px] block">الشيتات المحددة للتحويل:</span>
+                      <span className="font-extrabold text-white">
+                        {selectedSheetCodes.length} شيت (
+                        {selectedSheetCodes.length * CARD_CATEGORIES_CONFIG[selectedCategory].defaultCardsPerSheet} كرت)
+                      </span>
+                    </div>
+                    <div className="text-left">
+                      <span className="text-slate-400 text-[10px] block">إجمالي قيمة العهدة:</span>
+                      <span className="font-extrabold text-emerald-400 text-sm">
+                        {(
+                          selectedSheetCodes.length *
+                          CARD_CATEGORIES_CONFIG[selectedCategory].defaultWholesaleSheetPrice
+                        ).toLocaleString()}{' '}
+                        ر.ي
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-left">
-                    <span className="text-slate-400 text-[10px] block">إجمالي قيمة العهدة:</span>
-                    <span className="font-extrabold text-emerald-400 text-sm">
-                      {(
-                        selectedLeafNumbers.length *
-                        CARD_CATEGORIES_CONFIG[selectedCategory].defaultWholesaleSheetPrice
-                      ).toLocaleString()}{' '}
-                      ر.ي
-                    </span>
+                  <div className="text-[11px] text-emerald-300/90 font-mono bg-emerald-950/40 p-2 rounded-lg border border-emerald-500/20">
+                    {formatSheetListGrouped(selectedSheetCodes, sheets, batches)}
                   </div>
                 </div>
               )}

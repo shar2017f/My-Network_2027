@@ -12,7 +12,12 @@ export function onServiceWorkerSync(callback: SyncCallback): () => void {
 }
 
 export function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
-  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+  // Service Workers cannot be registered inside cross-origin or sandboxed iframes
+  if (
+    typeof window === 'undefined' ||
+    !('serviceWorker' in navigator) ||
+    window.self !== window.top
+  ) {
     return Promise.resolve(null);
   }
 
