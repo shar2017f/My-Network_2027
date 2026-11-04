@@ -24,6 +24,7 @@ import {
   CheckCircle2,
   Printer,
   Download,
+  Trash2,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { CardCategory, PrintBatch, SheetLeaf } from '../types';
@@ -31,6 +32,8 @@ import { CARD_CATEGORIES_CONFIG } from '../constants/cardConfig';
 import {
   getBatchOrdinalName,
   getCategoryBatchNumber,
+  getArabicMonthName,
+  getArabicMonthOnly,
   formatSheetWithBatch,
   formatSheetBadge,
   formatSheetListGrouped,
@@ -59,7 +62,9 @@ export const BatchesView: React.FC = () => {
     batches,
     sheets,
     addBatch,
+    updateBatch,
     updateBatchDateMonth,
+    deleteBatch,
     stockHealthList,
     targetPrintCategory,
     setTargetPrintCategory,
@@ -69,6 +74,7 @@ export const BatchesView: React.FC = () => {
   const [viewMode, setViewMode] = useState<'grid' | 'table' | 'sheets_table'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
+  const [selectedMonthFilter, setSelectedMonthFilter] = useState<string>('all');
 
   // Detailed Sheets Table State
   const [selectedBatchForSheets, setSelectedBatchForSheets] = useState<string>('all');
@@ -86,6 +92,8 @@ export const BatchesView: React.FC = () => {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingBatch, setEditingBatch] = useState<PrintBatch | null>(null);
   const [viewingLeafBatch, setViewingLeafBatch] = useState<PrintBatch | null>(null);
+  const [deletingBatch, setDeletingBatch] = useState<PrintBatch | null>(null);
+  const [deleteBatchError, setDeleteBatchError] = useState<string>('');
 
   // Add Batch Form State
   const [formData, setFormData] = useState<{
@@ -95,6 +103,9 @@ export const BatchesView: React.FC = () => {
     sheetsCount: number;
     cardsPerSheet: number;
     wholesaleSheetPrice: number;
+    batchPrintMode: 'sheets' | 'cards';
+    cardsCount: number;
+    wholesaleCardPrice: number;
     notes: string;
   }>({
     category: '200',
@@ -103,27 +114,50 @@ export const BatchesView: React.FC = () => {
     sheetsCount: 10,
     cardsPerSheet: 60,
     wholesaleSheetPrice: CARD_CATEGORIES_CONFIG['200'].defaultWholesaleSheetPrice,
+    batchPrintMode: 'sheets',
+    cardsCount: 20,
+    wholesaleCardPrice: 170,
     notes: '',
   });
 
   // Edit Date / Month Modal State
+  // Comprehensive Edit Batch State
   const [editDate, setEditDate] = useState('');
   const [editMonth, setEditMonth] = useState('');
+  const [editCategory, setEditCategory] = useState<CardCategory>('200');
+  const [editSheetsCount, setEditSheetsCount] = useState<number>(1);
+  const [editWholesaleSheetPrice, setEditWholesaleSheetPrice] = useState<number>(0);
+  const [editCardsPerSheet, setEditCardsPerSheet] = useState<number>(60);
+  const [editNotes, setEditNotes] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
 
   // Handle category change in Add Form
   const handleCategoryChange = (cat: CardCategory) => {
     const config = CARD_CATEGORIES_CONFIG[cat];
+    const cardPrice = config.defaultWholesaleCardPrice || Math.round(config.defaultWholesaleSheetPrice / config.defaultCardsPerSheet);
     setFormData((prev) => ({
       ...prev,
       category: cat,
       wholesaleSheetPrice: config.defaultWholesaleSheetPrice,
       cardsPerSheet: config.defaultCardsPerSheet,
+      batchPrintMode: config.allowCardUnits ? 'cards' : 'sheets',
+      cardsCount: config.allowCardUnits ? (prev.cardsCount || 20) : config.defaultCardsPerSheet,
+      wholesaleCardPrice: cardPrice,
     }));
+  };
+
+  // Handle category change in Edit Form
+  const handleEditCategoryChange = (cat: CardCategory) => {
+    setEditCategory(cat);
+    const config = CARD_CATEGORIES_CONFIG[cat];
+    setEditWholesaleSheetPrice(config.defaultWholesaleSheetPrice);
+    setEditCardsPerSheet(config.defaultCardsPerSheet);
   };
 
   // Quick Print of recommended sheets based on intelligent stock alert
   const handlePrintRecommended = (category: CardCategory, sheetsCount: number) => {
     const config = CARD_CATEGORIES_CONFIG[category];
+    const cardPrice = config.defaultWholesaleCardPrice || Math.round(config.defaultWholesaleSheetPrice / config.defaultCardsPerSheet);
     setFormData({
       category,
       date: new Date().toISOString().split('T')[0],
@@ -131,6 +165,9 @@ export const BatchesView: React.FC = () => {
       sheetsCount,
       cardsPerSheet: config.defaultCardsPerSheet,
       wholesaleSheetPrice: config.defaultWholesaleSheetPrice,
+      batchPrintMode: config.allowCardUnits ? 'cards' : 'sheets',
+      cardsCount: config.allowCardUnits ? 20 : sheetsCount * config.defaultCardsPerSheet,
+      wholesaleCardPrice: cardPrice,
       notes: `دفعة تعزيزية سريعة استجابة لتنبيه انخفاض رصيد فئة ${category}`,
     });
     setIsAddModalOpen(true);
@@ -147,13 +184,21 @@ export const BatchesView: React.FC = () => {
 
   const handleCreateBatch = (e: React.FormEvent) => {
     e.preventDefault();
+    const config = CARD_CATEGORIES_CONFIG[formData.category];
+    const isCardMode = config.allowCardUnits && formData.batchPrintMode === 'cards';
+
     addBatch({
       category: formData.category,
       date: formData.date,
       accountingMonth: formData.accountingMonth,
-      sheetsCount: Number(formData.sheetsCount),
-      cardsPerSheet: Number(formData.cardsPerSheet),
+      sheetsCount: isCardMode
+        ? Number((formData.cardsCount / config.defaultCardsPerSheet).toFixed(2))
+        : Number(formData.sheetsCount),
+      cardsPerSheet: isCardMode ? Number(formData.cardsCount) : Number(formData.cardsPerSheet),
       wholesaleSheetPrice: Number(formData.wholesaleSheetPrice),
+      batchType: isCardMode ? 'cards' : 'sheets',
+      cardsCount: isCardMode ? Number(formData.cardsCount) : undefined,
+      wholesaleCardPrice: isCardMode ? Number(formData.wholesaleCardPrice) : undefined,
       notes: formData.notes,
     });
     setIsAddModalOpen(false);
@@ -163,16 +208,79 @@ export const BatchesView: React.FC = () => {
     setEditingBatch(batch);
     setEditDate(batch.date);
     setEditMonth(batch.accountingMonth);
+    setEditCategory(batch.category);
+    setEditSheetsCount(batch.sheetsCount);
+    const catCfg = CARD_CATEGORIES_CONFIG[batch.category];
+    setEditWholesaleSheetPrice(
+      batch.wholesaleSheetPrice !== undefined
+        ? batch.wholesaleSheetPrice
+        : catCfg.defaultWholesaleSheetPrice
+    );
+    setEditCardsPerSheet(batch.cardsPerSheet || catCfg.defaultCardsPerSheet);
+    setEditNotes(batch.notes || '');
+    setEditError(null);
   };
 
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingBatch) return;
-    updateBatchDateMonth(editingBatch.id, editDate, editMonth);
+    setEditError(null);
+    const result = updateBatch(editingBatch.id, {
+      category: editCategory,
+      sheetsCount: Number(editSheetsCount),
+      wholesaleSheetPrice: Number(editWholesaleSheetPrice),
+      cardsPerSheet: Number(editCardsPerSheet),
+      date: editDate,
+      accountingMonth: editMonth,
+      notes: editNotes,
+    });
+    if (!result.success) {
+      setEditError(result.message || 'حدث خطأ أثناء تعديل بيانات الدفعة');
+      return;
+    }
     setEditingBatch(null);
   };
 
-  // Filtered batches
+  const handleDeleteBatchConfirm = () => {
+    if (!deletingBatch) return;
+    setDeleteBatchError('');
+    const res = deleteBatch(deletingBatch.id);
+    if (res.success) {
+      setDeletingBatch(null);
+      if (editingBatch?.id === deletingBatch.id) {
+        setEditingBatch(null);
+      }
+    } else {
+      setDeleteBatchError(res.message || 'تعذر حذف الدفعة');
+    }
+  };
+
+  // Months represented in batches for filtering
+  const availableBatchMonths = useMemo(() => {
+    const mSet = new Set<string>();
+    batches.forEach((b) => {
+      const m = b.accountingMonth || (b.date ? b.date.slice(0, 7) : '');
+      if (m) mSet.add(m);
+    });
+    // Ensure current month (2026-11) is present
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    mSet.add(currentMonth);
+    return Array.from(mSet).sort().reverse();
+  }, [batches]);
+
+  // Expected batch ordinal within the selected accounting month for live preview in the Add modal
+  const expectedBatchNumber = useMemo(() => {
+    return getCategoryBatchNumber(
+      {
+        category: formData.category,
+        accountingMonth: formData.accountingMonth,
+        date: formData.date,
+      },
+      batches
+    );
+  }, [formData.category, formData.accountingMonth, formData.date, batches]);
+
+  // Filtered batches with both Category, Search, and Accounting Month support
   const filteredBatches = batches.filter((b) => {
     const matchesSearch =
       b.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -180,29 +288,87 @@ export const BatchesView: React.FC = () => {
       b.category.includes(searchQuery);
     const matchesCat =
       selectedCategoryFilter === 'all' || b.category === selectedCategoryFilter;
-    return matchesSearch && matchesCat;
+    const bMonth = b.accountingMonth || (b.date ? b.date.slice(0, 7) : '');
+    const matchesMonth =
+      selectedMonthFilter === 'all' || bMonth === selectedMonthFilter;
+    return matchesSearch && matchesCat && matchesMonth;
   });
 
-  // Scope summary statistics for the detailed sheets table
+  // Defensive check: Exclude any sheets exceeding the batch's declared sheetsCount or BATCH-2026-005 leaves > 15 / BATCH-2026-004 leaves > 10
+  const isValidBatchSheet = (s: SheetLeaf, bInfo?: PrintBatch) => {
+    if (!s || !s.sheetCode) return false;
+    const leafNum = s.leafNumber || parseInt(s.sheetCode.match(/S(\d+)/)?.[1] || '0', 10);
+    // Batch 5 (500 category Batch 2): exactly 15 sheets (leaves 1..15)
+    if (s.batchId === 'BATCH-2026-005' && leafNum > 15) return false;
+    if (s.sheetCode.startsWith('QZ-500-B5-S') && (leafNum > 15 || parseInt(s.sheetCode.replace('QZ-500-B5-S', ''), 10) > 15)) return false;
+    // Batch 4 (200 category Batch 2): exactly 10 sheets (leaves 1..10)
+    if (s.batchId === 'BATCH-2026-004' && leafNum > 10) return false;
+    if (s.sheetCode.startsWith('QZ-200-B4-S') && (leafNum > 10 || parseInt(s.sheetCode.replace('QZ-200-B4-S', ''), 10) > 10)) return false;
+    const b = bInfo || batches.find((x) => x.id === s.batchId);
+    if (b && typeof b.sheetsCount === 'number' && leafNum > b.sheetsCount) return false;
+    return true;
+  };
+
+  // Scope summary statistics for the detailed sheets table (handling both full sheets and fractional card splits)
   const sheetsStats = useMemo(() => {
     const scoped = sheets.filter((s) => {
+      if (!isValidBatchSheet(s)) return false;
       if (selectedBatchForSheets !== 'all' && s.batchId !== selectedBatchForSheets) return false;
       if (sheetCategoryFilter !== 'all' && s.category !== sheetCategoryFilter) return false;
       return true;
     });
 
-    const total = scoped.length;
-    const delivered = scoped.filter((s) => s.status === 'delivered_outlet').length;
-    const distributor = scoped.filter((s) => s.status === 'distributor_custody').length;
-    const admin = scoped.filter((s) => s.status === 'admin_custody').length;
-    const damaged = scoped.filter((s) => s.status === 'damaged' || s.status === 'returned').length;
+    const totalCards = scoped.reduce(
+      (sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : (CARD_CATEGORIES_CONFIG[s.category]?.defaultCardsPerSheet || 60)),
+      0
+    );
+    const deliveredCards = scoped
+      .filter((s) => s.status === 'delivered_outlet')
+      .reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : (CARD_CATEGORIES_CONFIG[s.category]?.defaultCardsPerSheet || 60)), 0);
+    const distributorCards = scoped
+      .filter((s) => s.status === 'distributor_custody')
+      .reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : (CARD_CATEGORIES_CONFIG[s.category]?.defaultCardsPerSheet || 60)), 0);
+    const adminCards = scoped
+      .filter((s) => s.status === 'admin_custody')
+      .reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : (CARD_CATEGORIES_CONFIG[s.category]?.defaultCardsPerSheet || 60)), 0);
+    const damagedCards = scoped
+      .filter((s) => s.status === 'damaged' || s.status === 'returned')
+      .reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : (CARD_CATEGORIES_CONFIG[s.category]?.defaultCardsPerSheet || 60)), 0);
+
+    // Sum of fractions (e.g. 30/60 = 0.5 sheet)
+    const totalSheetsFraction = scoped.reduce((sum, s) => {
+      const perSheet = CARD_CATEGORIES_CONFIG[s.category]?.defaultCardsPerSheet || 60;
+      return sum + (s.cardsCount !== undefined ? s.cardsCount : perSheet) / perSheet;
+    }, 0);
+    const deliveredSheetsFraction = scoped.filter((s) => s.status === 'delivered_outlet').reduce((sum, s) => {
+      const perSheet = CARD_CATEGORIES_CONFIG[s.category]?.defaultCardsPerSheet || 60;
+      return sum + (s.cardsCount !== undefined ? s.cardsCount : perSheet) / perSheet;
+    }, 0);
+    const distributorSheetsFraction = scoped.filter((s) => s.status === 'distributor_custody').reduce((sum, s) => {
+      const perSheet = CARD_CATEGORIES_CONFIG[s.category]?.defaultCardsPerSheet || 60;
+      return sum + (s.cardsCount !== undefined ? s.cardsCount : perSheet) / perSheet;
+    }, 0);
+    const adminSheetsFraction = scoped.filter((s) => s.status === 'admin_custody').reduce((sum, s) => {
+      const perSheet = CARD_CATEGORIES_CONFIG[s.category]?.defaultCardsPerSheet || 60;
+      return sum + (s.cardsCount !== undefined ? s.cardsCount : perSheet) / perSheet;
+    }, 0);
+    const damagedSheetsFraction = scoped.filter((s) => s.status === 'damaged' || s.status === 'returned').reduce((sum, s) => {
+      const perSheet = CARD_CATEGORIES_CONFIG[s.category]?.defaultCardsPerSheet || 60;
+      return sum + (s.cardsCount !== undefined ? s.cardsCount : perSheet) / perSheet;
+    }, 0);
 
     return {
-      total,
-      delivered,
-      distributor,
-      admin,
-      damaged,
+      total: Number(totalSheetsFraction.toFixed(2)),
+      totalCards,
+      delivered: Number(deliveredSheetsFraction.toFixed(2)),
+      deliveredCards,
+      distributor: Number(distributorSheetsFraction.toFixed(2)),
+      distributorCards,
+      admin: Number(adminSheetsFraction.toFixed(2)),
+      adminCards,
+      damaged: Number(damagedSheetsFraction.toFixed(2)),
+      damagedCards,
+      recordsCount: scoped.length,
     };
   }, [sheets, selectedBatchForSheets, sheetCategoryFilter]);
 
@@ -222,6 +388,7 @@ export const BatchesView: React.FC = () => {
         };
       })
       .filter((s) => {
+        if (!isValidBatchSheet(s, s.batchInfo)) return false;
         // Filter by Batch
         if (selectedBatchForSheets !== 'all' && s.batchId !== selectedBatchForSheets) {
           return false;
@@ -602,6 +769,27 @@ export const BatchesView: React.FC = () => {
             </button>
           ))}
         </div>
+
+        {/* Accounting Month Filter */}
+        <div className="flex items-center gap-2 shrink-0 self-stretch sm:self-auto">
+          <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1 text-xs">
+            <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <select
+              value={selectedMonthFilter}
+              onChange={(e) => setSelectedMonthFilter(e.target.value)}
+              className="bg-transparent border-0 text-xs text-white font-bold focus:outline-hidden cursor-pointer"
+            >
+              <option value="all" className="bg-slate-950 text-white">
+                جميع الشهور
+              </option>
+              {availableBatchMonths.map((m) => (
+                <option key={m} value={m} className="bg-slate-950 text-white">
+                  {getArabicMonthName(m)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
 
       {/* Zero State if empty */}
@@ -627,13 +815,24 @@ export const BatchesView: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredBatches.map((batch) => {
             const config = CARD_CATEGORIES_CONFIG[batch.category];
-            const catBNum = batch.categoryBatchNumber || getCategoryBatchNumber(batch, batches);
+            const catBNum = getCategoryBatchNumber(batch, batches);
             const batchOrdinalTitle = getBatchOrdinalName(catBNum);
-            const batchSheets = sheets.filter((s) => s.batchId === batch.id);
-            const inAdminCustody = batchSheets.filter((s) => s.status === 'admin_custody').length;
-            const inDistributorCustody = batchSheets.filter((s) => s.status === 'distributor_custody').length;
-            const delivered = batchSheets.filter((s) => s.status === 'delivered_outlet').length;
-            const damaged = batchSheets.filter((s) => s.status === 'damaged' || s.status === 'returned').length;
+            const monthArabic = getArabicMonthName(batch.accountingMonth || batch.date?.slice(0, 7));
+            const batchSheets = sheets.filter((s) => s.batchId === batch.id && isValidBatchSheet(s, batch));
+            const cardsPerSheet = batch.cardsPerSheet || config.defaultCardsPerSheet || 60;
+            const adminCards = batchSheets.filter((s) => s.status === 'admin_custody').reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : cardsPerSheet), 0);
+            const distributorCards = batchSheets.filter((s) => s.status === 'distributor_custody').reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : cardsPerSheet), 0);
+            const deliveredCards = batchSheets.filter((s) => s.status === 'delivered_outlet').reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : cardsPerSheet), 0);
+            const damagedCards = batchSheets.filter((s) => s.status === 'damaged' || s.status === 'returned').reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : cardsPerSheet), 0);
+
+            const inAdminCustodySheets = Number((adminCards / cardsPerSheet).toFixed(2));
+            const inDistributorCustodySheets = Number((distributorCards / cardsPerSheet).toFixed(2));
+            const deliveredSheets = Number((deliveredCards / cardsPerSheet).toFixed(2));
+            const damagedSheets = Number((damagedCards / cardsPerSheet).toFixed(2));
+            const inAdminCustody = inAdminCustodySheets;
+            const inDistributorCustody = inDistributorCustodySheets;
+            const delivered = deliveredSheets;
+            const damaged = damagedSheets;
 
             return (
               <div
@@ -646,32 +845,51 @@ export const BatchesView: React.FC = () => {
                       {batch.category}
                     </div>
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-extrabold text-sm text-white">{batchOrdinalTitle}</span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 font-bold">
+                        {monthArabic && (
+                          <span className="text-[11px] px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-400 border border-amber-500/30 font-bold">
+                            {monthArabic}
+                          </span>
+                        )}
+                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 font-bold">
                           {config.name}
                         </span>
                         <span className="text-[10px] text-slate-500 font-mono">({batch.id})</span>
                       </div>
-                      <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-0.5">
+                      <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-1">
                         <span className="flex items-center gap-1">
                           <Calendar className="w-3 h-3 text-slate-500" />
                           {batch.date}
                         </span>
                         <span>•</span>
-                        <span className="text-amber-400/90 font-medium">شهر {batch.accountingMonth}</span>
+                        <span className="text-slate-400 font-medium">الشهر المحاسبي: {batch.accountingMonth}</span>
                       </div>
                     </div>
                   </div>
 
                   {currentRole === 'admin' && (
-                    <button
-                      onClick={() => handleOpenEdit(batch)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition cursor-pointer"
-                      title="تعديل تاريخ وشهر الدفعة"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleOpenEdit(batch)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition cursor-pointer"
+                        title="تعديل وتصحيح بيانات الدفعة وعدد الشيتات (صلاحيات المسؤول)"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      {inAdminCustody === batch.sheetsCount && (
+                        <button
+                          onClick={() => {
+                            setDeletingBatch(batch);
+                            setDeleteBatchError('');
+                          }}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition cursor-pointer"
+                          title="حذف دفعة الطباعة وإلغاء شيتاتها"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
 
@@ -706,37 +924,43 @@ export const BatchesView: React.FC = () => {
                 {/* Leaf status breakdown progress */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-[11px] text-slate-400">
-                    <span>موقف أوراق الشيتات ({batchSheets.length}):</span>
-                    <span>{delivered} مورد من {batch.sheetsCount}</span>
+                    <span>موقف أوراق الشيتات ({batch.sheetsCount} شيت — {batch.totalCards} كرت):</span>
+                    <span>{deliveredCards} كرت مورد ({deliveredSheets} شيت) من {batch.totalCards}</span>
                   </div>
                   <div className="h-2 w-full rounded-full bg-slate-800 flex overflow-hidden">
                     <div
-                      style={{ width: `${(delivered / (batch.sheetsCount || 1)) * 100}%` }}
+                      style={{ width: `${(deliveredCards / (batch.totalCards || 1)) * 100}%` }}
                       className="bg-purple-500 h-full"
-                      title={`مورد للمنافذ: ${delivered}`}
+                      title={`مورد للمنافذ: ${deliveredCards} كرت (${deliveredSheets} شيت)`}
                     />
                     <div
-                      style={{ width: `${(inDistributorCustody / (batch.sheetsCount || 1)) * 100}%` }}
+                      style={{ width: `${(distributorCards / (batch.totalCards || 1)) * 100}%` }}
                       className="bg-emerald-500 h-full"
-                      title={`في عهدة الموزع: ${inDistributorCustody}`}
+                      title={`في عهدة الموزع: ${distributorCards} كرت (${inDistributorCustodySheets} شيت)`}
                     />
                     <div
-                      style={{ width: `${(inAdminCustody / (batch.sheetsCount || 1)) * 100}%` }}
+                      style={{ width: `${(adminCards / (batch.totalCards || 1)) * 100}%` }}
                       className="bg-blue-500 h-full"
-                      title={`في عهدة المسؤول: ${inAdminCustody}`}
+                      title={`في عهدة المسؤول: ${adminCards} كرت (${inAdminCustodySheets} شيت)`}
                     />
-                    {damaged > 0 && (
+                    {damagedCards > 0 && (
                       <div
-                        style={{ width: `${(damaged / (batch.sheetsCount || 1)) * 100}%` }}
+                        style={{ width: `${(damagedCards / (batch.totalCards || 1)) * 100}%` }}
                         className="bg-rose-500 h-full"
-                        title={`تالف / مرتجع: ${damaged}`}
+                        title={`تالف / مرتجع: ${damagedCards} كرت (${damagedSheets} شيت)`}
                       />
                     )}
                   </div>
-                  <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
-                    <span className="text-blue-400">عهدة المسؤول: {inAdminCustody}</span>
-                    <span className="text-emerald-400">عهدة الموزع: {inDistributorCustody}</span>
-                    <span className="text-purple-400">مورد: {delivered}</span>
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1">
+                    <span className="text-blue-400 font-bold">
+                      عهدة المسؤول: {adminCards} كرت {inAdminCustodySheets > 0 ? `(${inAdminCustodySheets} شيت)` : ''}
+                    </span>
+                    <span className="text-emerald-400 font-bold">
+                      عهدة الموزع: {distributorCards} كرت {inDistributorCustodySheets > 0 ? `(${inDistributorCustodySheets} شيت)` : ''}
+                    </span>
+                    <span className="text-purple-400 font-bold">
+                      مورد: {deliveredCards} كرت {deliveredSheets > 0 ? `(${deliveredSheets} شيت)` : ''}
+                    </span>
                   </div>
                 </div>
 
@@ -774,9 +998,9 @@ export const BatchesView: React.FC = () => {
         </div>
       ) : viewMode === 'table' ? (
         /* Table View */
-        <div className="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-right text-xs">
+        <div className="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden shadow-xl">
+          <div className="table-scroll-container overflow-x-auto">
+            <table className="w-full text-right text-xs min-w-[760px]">
               <thead className="bg-slate-950/80 text-slate-400 border-b border-slate-800">
                 <tr>
                   <th className="p-3.5 font-bold">الدفعة والكود</th>
@@ -791,9 +1015,10 @@ export const BatchesView: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-800">
                 {filteredBatches.map((batch) => {
-                  const catBNum = batch.categoryBatchNumber || getCategoryBatchNumber(batch, batches);
+                  const catBNum = getCategoryBatchNumber(batch, batches);
                   const batchOrdinalTitle = getBatchOrdinalName(catBNum);
-                  const bSheets = sheets.filter((s) => s.batchId === batch.id);
+                  const monthArabic = getArabicMonthName(batch.accountingMonth || batch.date?.slice(0, 7));
+                  const bSheets = sheets.filter((s) => s.batchId === batch.id && isValidBatchSheet(s, batch));
 
                   return (
                     <tr key={batch.id} className="hover:bg-slate-850/50 transition">
@@ -807,7 +1032,12 @@ export const BatchesView: React.FC = () => {
                         </span>
                       </td>
                       <td className="p-3.5 text-slate-300">{batch.date}</td>
-                      <td className="p-3.5 text-amber-400 font-semibold">{batch.accountingMonth}</td>
+                      <td className="p-3.5">
+                        <span className="px-2 py-0.5 rounded bg-slate-800 text-amber-400 font-bold text-[11px] border border-slate-700/60 inline-block">
+                          {monthArabic}
+                        </span>
+                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">{batch.accountingMonth}</div>
+                      </td>
                       <td className="p-3.5 font-bold text-white">{batch.sheetsCount} شيت</td>
                       <td className="p-3.5 text-slate-300">{batch.totalCards} كرت</td>
                       <td className="p-3.5 font-bold text-emerald-400">
@@ -820,14 +1050,14 @@ export const BatchesView: React.FC = () => {
                               setSelectedBatchForSheets(batch.id);
                               setViewMode('sheets_table');
                             }}
-                            className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 transition cursor-pointer"
+                            className="min-w-[38px] min-h-[38px] p-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 transition cursor-pointer flex items-center justify-center active:scale-95"
                             title="عرض جدول تفصيلي لشيتات هذه الدفعة"
                           >
                             <Table className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => setViewingLeafBatch(batch)}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+                            className="min-w-[38px] min-h-[38px] p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer flex items-center justify-center active:scale-95"
                             title="تتبع الشيتات ورقة بورقة"
                           >
                             <Eye className="w-4 h-4" />
@@ -835,8 +1065,8 @@ export const BatchesView: React.FC = () => {
                           {currentRole === 'admin' && (
                             <button
                               onClick={() => handleOpenEdit(batch)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 transition cursor-pointer"
-                              title="تعديل التاريخ والشهر"
+                              className="min-w-[38px] min-h-[38px] p-2 rounded-xl bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-300 transition cursor-pointer flex items-center justify-center active:scale-95"
+                              title="تعديل وتصحيح بيانات الدفعة وعدد الشيتات (صلاحيات المسؤول)"
                             >
                               <Edit2 className="w-4 h-4" />
                             </button>
@@ -861,7 +1091,7 @@ export const BatchesView: React.FC = () => {
                 <span>إجمالي الشيتات</span>
               </span>
               <div className="text-xl font-black text-white">
-                {sheetsStats.total} <span className="text-xs font-normal text-slate-400">شيت</span>
+                {sheetsStats.total} <span className="text-xs font-normal text-slate-400">شيت ({sheetsStats.totalCards} كرت)</span>
               </div>
               <span className="text-[10px] text-slate-500 block">
                 في النطاق المحدد حالياً
@@ -874,10 +1104,10 @@ export const BatchesView: React.FC = () => {
                 <span>موزع للمنافذ</span>
               </span>
               <div className="text-xl font-black text-purple-300">
-                {sheetsStats.delivered} <span className="text-xs font-normal text-purple-400/80">شيت</span>
+                {sheetsStats.delivered} <span className="text-xs font-normal text-purple-400/80">شيت ({sheetsStats.deliveredCards} كرت)</span>
               </div>
               <span className="text-[10px] text-purple-400/90 font-bold block">
-                نسبة الإنجاز: {Math.round((sheetsStats.delivered / (sheetsStats.total || 1)) * 100)}%
+                نسبة الإنجاز: {Math.round((sheetsStats.deliveredCards / (sheetsStats.totalCards || 1)) * 100)}%
               </span>
             </div>
 
@@ -887,7 +1117,7 @@ export const BatchesView: React.FC = () => {
                 <span>بعهدة الموزع</span>
               </span>
               <div className="text-xl font-black text-emerald-300">
-                {sheetsStats.distributor} <span className="text-xs font-normal text-emerald-400/80">شيت</span>
+                {sheetsStats.distributor} <span className="text-xs font-normal text-emerald-400/80">شيت ({sheetsStats.distributorCards} كرت)</span>
               </div>
               <span className="text-[10px] text-emerald-400/90 font-bold block">
                 قيد التوزيع الميداني
@@ -900,7 +1130,7 @@ export const BatchesView: React.FC = () => {
                 <span>متبقي بمخزن المسؤول</span>
               </span>
               <div className="text-xl font-black text-blue-300">
-                {sheetsStats.admin} <span className="text-xs font-normal text-blue-400/80">شيت</span>
+                {sheetsStats.admin} <span className="text-xs font-normal text-blue-400/80">شيت ({sheetsStats.adminCards} كرت)</span>
               </div>
               <span className="text-[10px] text-blue-400/90 font-bold block">
                 جاهز للتحويل أو الصرف
@@ -913,7 +1143,7 @@ export const BatchesView: React.FC = () => {
                 <span>تالف / مرتجع</span>
               </span>
               <div className="text-xl font-black text-rose-300">
-                {sheetsStats.damaged} <span className="text-xs font-normal text-rose-400/80">شيت</span>
+                {sheetsStats.damaged} <span className="text-xs font-normal text-rose-400/80">شيت ({sheetsStats.damagedCards} كرت)</span>
               </div>
               <span className="text-[10px] text-rose-400/90 font-bold block">
                 مستبعد من التداول
@@ -936,15 +1166,14 @@ export const BatchesView: React.FC = () => {
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500 font-bold"
                 >
                   <option value="all">
-                    جميع دفعات الطباعة ({batches.length} دفعات — {sheets.length} شيت إجمالي)
+                    جميع دفعات الطباعة ({batches.length} دفعات — {batches.reduce((sum, b) => sum + (b.sheetsCount || 0), 0)} شيت إجمالي)
                   </option>
                   {batches.map((b) => {
                     const catBNum = b.categoryBatchNumber || getCategoryBatchNumber(b, batches);
                     const name = getBatchOrdinalName(catBNum);
-                    const bSheets = sheets.filter((s) => s.batchId === b.id);
                     return (
                       <option key={b.id} value={b.id}>
-                        {name} ({b.id}) — فئة {b.category} ريال ({bSheets.length} شيت)
+                        {name} ({b.id}) — فئة {b.category} ريال ({b.sheetsCount} شيت — {b.totalCards} كرت)
                       </option>
                     );
                   })}
@@ -983,7 +1212,7 @@ export const BatchesView: React.FC = () => {
                 <button
                   onClick={exportDetailedSheetsCSV}
                   disabled={detailedSheetsList.length === 0}
-                  className="p-2 sm:px-3 sm:py-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
+                  className="min-h-[40px] px-3 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0 active:scale-95"
                   title="تصدير جدول الشيتات إلى ملف Excel / CSV"
                 >
                   <Download className="w-3.5 h-3.5 text-emerald-400" />
@@ -992,7 +1221,7 @@ export const BatchesView: React.FC = () => {
                 <button
                   onClick={handlePrintSheetsTable}
                   disabled={detailedSheetsList.length === 0}
-                  className="p-2 sm:px-3 sm:py-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
+                  className="min-h-[40px] px-3 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0 active:scale-95"
                   title="طباعة جدول الشيتات"
                 >
                   <Printer className="w-3.5 h-3.5 text-amber-400" />
@@ -1007,66 +1236,66 @@ export const BatchesView: React.FC = () => {
                 <span className="text-[11px] font-bold text-slate-400 ml-1">حالة الشيت:</span>
                 <button
                   onClick={() => setSheetStatusFilter('all')}
-                  className={`px-3 py-1 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer active:scale-95 ${
                     sheetStatusFilter === 'all'
                       ? 'bg-amber-500 text-slate-950 shadow-sm'
                       : 'bg-slate-950 text-slate-300 hover:text-white border border-slate-800'
                   }`}
                 >
-                  الكل ({sheetsStats.total})
+                  الكل ({sheetsStats.total} شيت / {sheetsStats.totalCards} كرت)
                 </button>
                 <button
                   onClick={() => setSheetStatusFilter('delivered_outlet')}
-                  className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                  className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer active:scale-95 ${
                     sheetStatusFilter === 'delivered_outlet'
                       ? 'bg-purple-600 text-white shadow-sm'
                       : 'bg-slate-950 text-purple-300 hover:text-white border border-purple-500/30'
                   }`}
                 >
                   <Store className="w-3 h-3" />
-                  <span>موزع للمنافذ ({sheetsStats.delivered})</span>
+                  <span>موزع للمنافذ ({sheetsStats.delivered} شيت / {sheetsStats.deliveredCards} كرت)</span>
                 </button>
                 <button
                   onClick={() => setSheetStatusFilter('distributor_custody')}
-                  className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                  className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer active:scale-95 ${
                     sheetStatusFilter === 'distributor_custody'
                       ? 'bg-emerald-600 text-white shadow-sm'
                       : 'bg-slate-950 text-emerald-300 hover:text-white border border-emerald-500/30'
                   }`}
                 >
                   <Shield className="w-3 h-3" />
-                  <span>بعهدة الموزع ({sheetsStats.distributor})</span>
+                  <span>بعهدة الموزع ({sheetsStats.distributor} شيت / {sheetsStats.distributorCards} كرت)</span>
                 </button>
                 <button
                   onClick={() => setSheetStatusFilter('admin_custody')}
-                  className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                  className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer active:scale-95 ${
                     sheetStatusFilter === 'admin_custody'
                       ? 'bg-blue-600 text-white shadow-sm'
                       : 'bg-slate-950 text-blue-300 hover:text-white border border-blue-500/30'
                   }`}
                 >
                   <Clock className="w-3 h-3" />
-                  <span>متبقي بالمخزن ({sheetsStats.admin})</span>
+                  <span>متبقي بالمخزن ({sheetsStats.admin} شيت / {sheetsStats.adminCards} كرت)</span>
                 </button>
                 <button
                   onClick={() => setSheetStatusFilter('damaged')}
-                  className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                  className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer active:scale-95 ${
                     sheetStatusFilter === 'damaged'
                       ? 'bg-rose-600 text-white shadow-sm'
                       : 'bg-slate-950 text-rose-300 hover:text-white border border-rose-500/30'
                   }`}
                 >
                   <AlertTriangle className="w-3 h-3" />
-                  <span>تالف / مرتجع ({sheetsStats.damaged})</span>
+                  <span>تالف / مرتجع ({sheetsStats.damaged} شيت / {sheetsStats.damagedCards} كرت)</span>
                 </button>
               </div>
 
               {/* Category Filter Pills */}
-              <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
+              <div className="flex items-center gap-1 overflow-x-auto table-scroll-container pb-1 sm:pb-0">
                 <span className="text-[11px] font-bold text-slate-400 ml-1">الفئة:</span>
                 <button
                   onClick={() => setSheetCategoryFilter('all')}
-                  className={`px-2 py-0.5 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                  className={`min-h-[34px] px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer shrink-0 active:scale-95 ${
                     sheetCategoryFilter === 'all'
                       ? 'bg-amber-400 text-slate-950'
                       : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
@@ -1078,7 +1307,7 @@ export const BatchesView: React.FC = () => {
                   <button
                     key={cat}
                     onClick={() => setSheetCategoryFilter(cat)}
-                    className={`px-2 py-0.5 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                    className={`min-h-[34px] px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer shrink-0 active:scale-95 ${
                       sheetCategoryFilter === cat
                         ? 'bg-amber-400 text-slate-950'
                         : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
@@ -1106,15 +1335,15 @@ export const BatchesView: React.FC = () => {
                   setSheetCategoryFilter('all');
                   setSheetSearchQuery('');
                 }}
-                className="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs transition cursor-pointer"
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs transition cursor-pointer"
               >
                 إعادة ضبط الفلاتر
               </button>
             </div>
           ) : (
             <div className="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden shadow-xl">
-              <div className="overflow-x-auto">
-                <table className="w-full text-right text-xs">
+              <div className="table-scroll-container overflow-x-auto">
+                <table className="w-full text-right text-xs min-w-[850px]">
                   <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
                     <tr>
                       <th className="p-3.5 font-bold"># رقم الشيت بالدفعة</th>
@@ -1129,8 +1358,9 @@ export const BatchesView: React.FC = () => {
                   <tbody className="divide-y divide-slate-800/80">
                     {detailedSheetsList.map((sheet) => {
                       const config = CARD_CATEGORIES_CONFIG[sheet.category];
-                      const wholesalePrice =
-                        sheet.batchInfo?.wholesaleSheetPrice || config.defaultWholesaleSheetPrice;
+                      const perSheet = config.defaultCardsPerSheet || 60;
+                      const isPartial = sheet.cardsCount < perSheet;
+                      const wholesalePrice = (sheet.cardsCount / perSheet) * (sheet.batchInfo?.wholesaleSheetPrice || config.defaultWholesaleSheetPrice);
                       const faceValue = sheet.cardsCount * config.nominalValue;
 
                       return (
@@ -1140,12 +1370,17 @@ export const BatchesView: React.FC = () => {
                         >
                           {/* 1. Leaf Number per batch */}
                           <td className="p-3.5">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="px-2.5 py-1 rounded-xl bg-amber-500/15 text-amber-300 border border-amber-500/30 font-black font-mono text-xs flex items-center justify-center">
                                 شيت #{sheet.leafNumber}
                               </span>
+                              {isPartial && (
+                                <span className="px-1.5 py-0.5 rounded-md text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold">
+                                  مجزأ ({sheet.cardsCount} كرت)
+                                </span>
+                              )}
                               <span className="text-[11px] text-slate-400 font-bold">
-                                من {sheet.batchInfo?.sheetsCount || 15}
+                                من {sheet.batchInfo?.sheetsCount || 1}
                               </span>
                             </div>
                             <span className="text-[10px] text-slate-500 mt-1 block font-medium">
@@ -1178,10 +1413,10 @@ export const BatchesView: React.FC = () => {
                           {/* 4. Financials */}
                           <td className="p-3.5">
                             <div className="font-bold text-white text-xs">
-                              {sheet.cardsCount} كرت
+                              {sheet.cardsCount} كرت {isPartial ? `(من ${perSheet})` : ''}
                             </div>
                             <div className="text-[10px] text-emerald-400 font-bold mt-0.5">
-                              جملة: {wholesalePrice.toLocaleString()} ر.ي
+                              جملة: {Math.round(wholesalePrice).toLocaleString()} ر.ي
                             </div>
                             <div className="text-[10px] text-slate-400">
                               اسمية: {faceValue.toLocaleString()} ر.ي
@@ -1300,6 +1535,29 @@ export const BatchesView: React.FC = () => {
                 </div>
               </div>
 
+              {/* Live Monthly Batch Sequence Preview */}
+              <div className="p-3 rounded-xl bg-gradient-to-r from-amber-500/20 via-slate-800 to-slate-900 border border-amber-500/40 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold shrink-0">
+                    <Sparkles className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-amber-300 block font-semibold">ترقيم الدفعة المحاسبي للشهر:</span>
+                    <span className="font-black text-white text-sm">
+                      {getBatchOrdinalName(expectedBatchNumber)} ({getArabicMonthName(formData.accountingMonth)})
+                    </span>
+                  </div>
+                </div>
+                <div className="text-left shrink-0">
+                  <span className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 font-black text-xs block">
+                    فئة {formData.category} ر.ي
+                  </span>
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">
+                    {expectedBatchNumber === 1 ? 'بداية دورة شهرية جديدة' : `الدفعة رقم ${expectedBatchNumber} هذا الشهر`}
+                  </span>
+                </div>
+              </div>
+
               {/* Date & Accounting Month */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1308,78 +1566,182 @@ export const BatchesView: React.FC = () => {
                     type="date"
                     required
                     value={formData.date}
-                    onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500"
+                    onChange={(e) => {
+                      const newDate = e.target.value;
+                      const newMonth = newDate ? newDate.slice(0, 7) : formData.accountingMonth;
+                      setFormData({ ...formData, date: newDate, accountingMonth: newMonth });
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500 font-mono"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">الشهر المحاسبي</label>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    الشهر المحاسبي ({getArabicMonthOnly(formData.accountingMonth)})
+                  </label>
                   <input
                     type="month"
                     required
                     value={formData.accountingMonth}
                     onChange={(e) => setFormData({ ...formData, accountingMonth: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500 font-mono"
                   />
                 </div>
               </div>
 
-              {/* Sheets count & Cards per sheet */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">عدد الشيتات (الأوراق)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    value={formData.sheetsCount}
-                    onChange={(e) => setFormData({ ...formData, sheetsCount: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500 font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">كروت في كل شيت</label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    value={formData.cardsPerSheet}
-                    onChange={(e) => setFormData({ ...formData, cardsPerSheet: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500"
-                  />
-                </div>
-              </div>
+              {/* High Denomination Flexibility: Option to print by Card Count (Fractional sheets) or Full Sheets */}
+              {CARD_CATEGORIES_CONFIG[formData.category].allowCardUnits && (
+                <div className="p-3 rounded-xl bg-slate-950 border border-amber-500/30 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-amber-300">خيار تحديد كمية الطباعة لفئة {formData.category} ر.ي:</label>
+                    <span className="text-[10px] text-slate-400">مرونة طباعة أجزاء الشيت</span>
+                  </div>
 
-              {/* Wholesale sheet price */}
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">
-                  سعر الشيت بالجملة (ر.ي)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  required
-                  value={formData.wholesaleSheetPrice}
-                  onChange={(e) => setFormData({ ...formData, wholesaleSheetPrice: Number(e.target.value) })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500 font-bold text-emerald-400"
-                />
-                <span className="text-[10px] text-slate-400 mt-1 block">
-                  الافتراضي: 10,000 لفئة 200 • 25,000 لفئة 500 • 50,000 لفئة 1000 • 150,000 لفئة 3000
-                </span>
-              </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, batchPrintMode: 'cards' })}
+                      className={`py-2 px-3 rounded-lg text-xs font-bold transition cursor-pointer text-center ${
+                        formData.batchPrintMode === 'cards'
+                          ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+                          : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                      }`}
+                    >
+                      بعدد الكروت (نصف / ربع شيت أو مخصص)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, batchPrintMode: 'sheets' })}
+                      className={`py-2 px-3 rounded-lg text-xs font-bold transition cursor-pointer text-center ${
+                        formData.batchPrintMode === 'sheets'
+                          ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+                          : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                      }`}
+                    >
+                      بالشيت الكامل (60 كرت)
+                    </button>
+                  </div>
+
+                  {formData.batchPrintMode === 'cards' && (
+                    <div className="space-y-2 pt-1 border-t border-slate-800">
+                      <span className="text-[11px] font-bold text-slate-400 block">أجزاء الشيت السريعة:</span>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {[
+                          { count: 15, label: 'ربع شيت (15)' },
+                          { count: 20, label: 'ثلث شيت (20)' },
+                          { count: 30, label: 'نصف شيت (30)' },
+                          { count: 60, label: 'شيت كامل (60)' },
+                        ].map((btn) => (
+                          <button
+                            key={btn.count}
+                            type="button"
+                            onClick={() => setFormData({ ...formData, cardsCount: btn.count })}
+                            className={`py-1.5 px-1 rounded-lg text-[10px] font-bold border transition cursor-pointer text-center ${
+                              formData.cardsCount === btn.count
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/60 shadow-sm'
+                                : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                            }`}
+                          >
+                            {btn.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 pt-1">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                            عدد الكروت المراد طباعتها
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            required
+                            value={formData.cardsCount}
+                            onChange={(e) => setFormData({ ...formData, cardsCount: Number(e.target.value) })}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500 font-bold font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                            سعر الكرت الواحد بالجملة (ر.ي)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            required
+                            value={formData.wholesaleCardPrice}
+                            onChange={(e) => setFormData({ ...formData, wholesaleCardPrice: Number(e.target.value) })}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-emerald-400 focus:outline-hidden focus:border-amber-500 font-bold font-mono"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Sheets count & Cards per sheet (For standard sheet printing) */}
+              {(!CARD_CATEGORIES_CONFIG[formData.category].allowCardUnits || formData.batchPrintMode === 'sheets') && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">عدد الشيتات (الأوراق)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        required
+                        value={formData.sheetsCount}
+                        onChange={(e) => setFormData({ ...formData, sheetsCount: Number(e.target.value) })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500 font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">كروت في كل شيت</label>
+                      <input
+                        type="number"
+                        min="1"
+                        required
+                        value={formData.cardsPerSheet}
+                        onChange={(e) => setFormData({ ...formData, cardsPerSheet: Number(e.target.value) })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      سعر الشيت بالجملة (ر.ي)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      required
+                      value={formData.wholesaleSheetPrice}
+                      onChange={(e) => setFormData({ ...formData, wholesaleSheetPrice: Number(e.target.value) })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500 font-bold text-emerald-400"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-1 block">
+                      الافتراضي: 10,000 لفئة 200 • 25,000 لفئة 500 • 50,000 لفئة 1000 • 150,000 لفئة 3000
+                    </span>
+                  </div>
+                </>
+              )}
 
               {/* Total Summary Preview */}
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
                 <div>
                   <span className="text-slate-400 block text-[10px]">إجمالي الكروت الناتجة:</span>
                   <span className="font-extrabold text-white">
-                    {(formData.sheetsCount * formData.cardsPerSheet).toLocaleString()} كرت
+                    {CARD_CATEGORIES_CONFIG[formData.category].allowCardUnits && formData.batchPrintMode === 'cards'
+                      ? `${formData.cardsCount.toLocaleString()} كرت (جزئي)`
+                      : `${(formData.sheetsCount * formData.cardsPerSheet).toLocaleString()} كرت`}
                   </span>
                 </div>
                 <div className="text-left">
                   <span className="text-slate-400 block text-[10px]">القيمة الإجمالية بالجملة:</span>
                   <span className="font-extrabold text-emerald-400 text-sm">
-                    {(formData.sheetsCount * formData.wholesaleSheetPrice).toLocaleString()} ر.ي
+                    {CARD_CATEGORIES_CONFIG[formData.category].allowCardUnits && formData.batchPrintMode === 'cards'
+                      ? `${(formData.cardsCount * formData.wholesaleCardPrice).toLocaleString()} ر.ي`
+                      : `${(formData.sheetsCount * formData.wholesaleSheetPrice).toLocaleString()} ر.ي`}
                   </span>
                 </div>
               </div>
@@ -1416,73 +1778,239 @@ export const BatchesView: React.FC = () => {
         </div>
       )}
 
-      {/* 2. Modal: Edit Batch Date & Accounting Month */}
-      {editingBatch && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in">
-          <div className="w-full max-w-sm rounded-2xl bg-slate-900 border border-slate-700 p-6 text-slate-100 shadow-2xl relative text-right">
-            <button
-              onClick={() => setEditingBatch(null)}
-              className="absolute left-4 top-4 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
-            >
-              <X className="w-5 h-5" />
-            </button>
+      {/* 2. Modal: Edit Batch Full Data & Sheet Correction */}
+      {editingBatch && (() => {
+        const batchSheets = sheets.filter((s) => s.batchId === editingBatch.id);
+        const usedSheets = batchSheets.filter((s) => s.status !== 'admin_custody');
+        const usedSheetsCount = usedSheets.length;
+        const canChangeCategory = usedSheetsCount === 0;
+        const minAllowedSheets = Math.max(1, usedSheetsCount);
+        const currentDiff = Number(editSheetsCount) - editingBatch.sheetsCount;
+        const newTotalCards = Number(editSheetsCount) * Number(editCardsPerSheet);
+        const newTotalWholesale = Number(editSheetsCount) * Number(editWholesaleSheetPrice);
 
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
-                <Edit2 className="w-4 h-4" />
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in overflow-y-auto">
+            <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-slate-700 p-6 text-slate-100 shadow-2xl relative text-right my-8 max-h-[90vh] overflow-y-auto">
+              <button
+                onClick={() => setEditingBatch(null)}
+                className="absolute left-4 top-4 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                title="إغلاق"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-center gap-2.5 mb-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center font-bold">
+                  <Edit2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-white">تعديل وتصحيح بيانات دفعة الطباعة</h3>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-amber-400 font-mono font-bold">{editingBatch.id}</span>
+                    <span className="text-slate-500">•</span>
+                    <span className="text-slate-400">دفعة فئة {editingBatch.category} ر.ي</span>
+                  </div>
+                </div>
               </div>
-              <div>
-                <h3 className="text-sm font-extrabold text-white">تعديل تاريخ وشهر الدفعة</h3>
-                <span className="text-xs text-amber-400">{editingBatch.id}</span>
-              </div>
+
+              {/* Status & Custody Notice */}
+              {usedSheetsCount > 0 ? (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs space-y-1 mb-4">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>تنبيه قيود العهدة: تم تحويل/توريد {usedSheetsCount} شيت من هذه الدفعة مسبقاً.</span>
+                  </div>
+                  <p className="text-[11px] text-amber-200/80 leading-relaxed pr-5">
+                    الحد الأدنى لعدد الشيتات هو <span className="font-bold text-white font-mono">{minAllowedSheets} شيت</span>. لا يمكن خفض العدد لما دونه لحماية مطابقة العهدة، ولا يمكن تعديل فئة الكرت بعد بدء التوزيع.
+                  </p>
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs space-y-1 mb-4">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>جاهز للتعديل الكامل: جميع شيتات هذه الدفعة ({editingBatch.sheetsCount} شيت) ما زالت في عهدة المسؤول.</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-200/80 leading-relaxed pr-5">
+                    إذا أخطأت وسجلت عدد شيتات أكثر أو فئة خاطئة، يمكنك تصحيحها الآن بحرية كاملة وسيتكفل النظام بضبط المخزون وسجلات التدقيق آلياً.
+                  </p>
+                </div>
+              )}
+
+              {/* Error Banner */}
+              {editError && (
+                <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/60 text-rose-200 text-xs font-bold flex items-center gap-2 mb-4 animate-in fade-in">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{editError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleSaveEdit} className="space-y-4">
+                {/* 1. Category */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-bold text-slate-300">فئة الكرت</label>
+                    {!canChangeCategory && (
+                      <span className="text-[10px] text-slate-500">مقفلة لبدء توزيع شيتات منها</span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                    {Object.keys(CARD_CATEGORIES_CONFIG).map((cat) => (
+                      <button
+                        type="button"
+                        key={cat}
+                        disabled={!canChangeCategory}
+                        onClick={() => handleEditCategoryChange(cat as CardCategory)}
+                        className={`p-2 rounded-xl text-xs font-bold border transition text-center ${
+                          editCategory === cat
+                            ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-xs'
+                            : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                        } ${!canChangeCategory ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 2. Number of Sheets Correction */}
+                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                      <Layers className="w-4 h-4" />
+                      <span>عدد الشيتات الفعلي المصحح:</span>
+                    </label>
+                    <span className="text-[11px] font-mono text-slate-400">
+                      العدد السابق: <span className="text-white font-bold">{editingBatch.sheetsCount}</span>
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    min={minAllowedSheets}
+                    required
+                    value={editSheetsCount}
+                    onChange={(e) => setEditSheetsCount(Math.max(1, Number(e.target.value)))}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-hidden focus:border-amber-500 font-mono font-bold"
+                  />
+                  <div className="flex items-center justify-between text-[11px] pt-1">
+                    <span className="text-slate-400">
+                      الحد الأدنى المسموح به: <span className="font-mono font-bold text-amber-300">{minAllowedSheets} شيت</span>
+                    </span>
+                    {currentDiff !== 0 && (
+                      <span
+                        className={`font-mono font-bold ${
+                          currentDiff > 0 ? 'text-emerald-400' : 'text-rose-400'
+                        }`}
+                      >
+                        {currentDiff > 0 ? `+${currentDiff} شيت سيتم توليدها` : `${currentDiff} شيت زائدة ستُحذف`}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* 3. Wholesale Price & Cards Per Sheet */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      سعر الشيت بالجملة (ر.ي)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      required
+                      value={editWholesaleSheetPrice}
+                      onChange={(e) => setEditWholesaleSheetPrice(Number(e.target.value))}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500 font-mono font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      عدد الكروت بالشيت
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      required
+                      value={editCardsPerSheet}
+                      onChange={(e) => setEditCardsPerSheet(Number(e.target.value))}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500 font-mono font-bold"
+                    />
+                  </div>
+                </div>
+
+                {/* 4. Date & Accounting Month */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">تاريخ الدفعة</label>
+                    <input
+                      type="date"
+                      required
+                      value={editDate}
+                      onChange={(e) => setEditDate(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">الشهر المحاسبي</label>
+                    <input
+                      type="month"
+                      required
+                      value={editMonth}
+                      onChange={(e) => setEditMonth(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
+                {/* 5. Notes / Reason for correction */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    ملاحظات / سبب التعديل والتصحيح (توثق بسجل التدقيق)
+                  </label>
+                  <input
+                    type="text"
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    placeholder="مثال: تصحيح خطأ إدخال عدد الشيتات من 20 إلى 15 شيت..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500"
+                  />
+                </div>
+
+                {/* 6. Live Financial Recalculation Summary Box */}
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5 text-xs">
+                  <span className="text-[11px] font-bold text-slate-400 block border-b border-slate-900 pb-1">
+                    المطابقة الحسابية بعد تطبيق التعديل:
+                  </span>
+                  <div className="flex justify-between items-center text-slate-300">
+                    <span>إجمالي الكروت المحسوبة:</span>
+                    <span className="font-mono font-bold text-white">{newTotalCards.toLocaleString()} كرت</span>
+                  </div>
+                  <div className="flex justify-between items-center text-slate-300">
+                    <span>إجمالي قيمة الدفعة بالجملة:</span>
+                    <span className="font-mono font-black text-amber-400">{newTotalWholesale.toLocaleString()} ر.ي</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingBatch(null)}
+                    className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition cursor-pointer"
+                  >
+                    إلغاء
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20 transition cursor-pointer"
+                  >
+                    حفظ وتثبيت التصحيح في سجل التدقيق ✍️
+                  </button>
+                </div>
+              </form>
             </div>
-
-            <p className="text-xs text-slate-400 mb-4 leading-relaxed">
-              سيتم توثيق هذا التعديل آلياً في سجل التدقيق المالي لضمان الشفافية.
-            </p>
-
-            <form onSubmit={handleSaveEdit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">تاريخ الدفعة الجديد</label>
-                <input
-                  type="date"
-                  required
-                  value={editDate}
-                  onChange={(e) => setEditDate(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">الشهر المحاسبي الجديد</label>
-                <input
-                  type="month"
-                  required
-                  value={editMonth}
-                  onChange={(e) => setEditMonth(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setEditingBatch(null)}
-                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs shadow-md transition cursor-pointer"
-                >
-                  تأكيد التعديل
-                </button>
-              </div>
-            </form>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* 3. Modal: Leaf-by-leaf tracking */}
       {viewingLeafBatch && (() => {
@@ -1524,7 +2052,7 @@ export const BatchesView: React.FC = () => {
               <div className="flex-1 overflow-y-auto pr-1 space-y-2">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   {sheets
-                    .filter((s) => s.batchId === viewingLeafBatch.id)
+                    .filter((s) => s.batchId === viewingLeafBatch.id && isValidBatchSheet(s, viewingLeafBatch))
                     .map((sheet) => (
                       <div
                         key={sheet.sheetCode}
@@ -1588,6 +2116,60 @@ export const BatchesView: React.FC = () => {
           </div>
         );
       })()}
+      {/* Modal: Delete Batch Confirmation */}
+      {deletingBatch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-rose-500/40 p-6 text-slate-100 shadow-2xl relative text-right">
+            <button
+              onClick={() => setDeletingBatch(null)}
+              className="absolute left-4 top-4 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center font-bold mb-4 mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <h3 className="text-base font-extrabold text-white text-center mb-1">
+              تأكيد حذف دفعة الطباعة
+            </h3>
+            <p className="text-xs text-slate-400 text-center mb-4 font-mono font-bold">
+              {deletingBatch.id} • فئة {deletingBatch.category} ريال • دفعة #{deletingBatch.batchNumber}
+            </p>
+
+            {deleteBatchError && (
+              <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{deleteBatchError}</span>
+              </div>
+            )}
+
+            <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs leading-relaxed text-slate-300 mb-5">
+              <p>
+                هل أنت متأكد من حذف دفعة الطباعة هذه بالكامل؟ سيتم إلغاء جميع شيتاتها ({deletingBatch.sheetsCount} شيت) من مخزن المسؤول.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleDeleteBatchConfirm}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-xs transition cursor-pointer shadow-md"
+              >
+                تأكيد حذف الدفعة وإلغاء شيتاتها
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeletingBatch(null)}
+                className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer transition"
+              >
+                تراجع
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

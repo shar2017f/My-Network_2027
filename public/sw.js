@@ -1,7 +1,7 @@
 // Service Worker for QAZAN-NET (قعزان نت)
 // Provides full offline access, app-shell caching, and auto-sync on reconnect
 
-const CACHE_NAME = 'qnet-cache-v2';
+const CACHE_NAME = 'qnet-cache-v3';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

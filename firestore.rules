@@ -80,5 +80,10 @@ service cloud.firestore {
     match /system_events/{eventId} {
       allow read, write: if true;
     }
+
+    // Expenses & Capital Accounts
+    match /expenses/{expenseId} {
+      allow read, write: if true;
+    }
   }
 }

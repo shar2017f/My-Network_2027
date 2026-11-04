@@ -10,13 +10,27 @@ import { OutletsView } from './views/OutletsView';
 import { OutletPerformanceView } from './views/OutletPerformanceView';
 import { DirectSalesView } from './views/DirectSalesView';
 import { CustodyCashView } from './views/CustodyCashView';
+import { TrialBalanceView } from './views/TrialBalanceView';
 import { SettlementsView } from './views/SettlementsView';
 import { PermissionsView } from './views/PermissionsView';
 import { AuditLogView } from './views/AuditLogView';
 import { SmartAnalyticsView } from './views/SmartAnalyticsView';
 import { BackupSyncView } from './views/BackupSyncView';
+import { ExpensesView } from './views/ExpensesView';
 import { DistributorWelcomeModal } from './components/DistributorWelcomeModal';
-import { WifiOff, Wifi, RefreshCw, AlertTriangle, Clock, X } from 'lucide-react';
+import {
+  WifiOff,
+  Wifi,
+  RefreshCw,
+  AlertTriangle,
+  Clock,
+  X,
+  LayoutDashboard,
+  Store,
+  ArrowLeftRight,
+  Scale,
+  Coins,
+} from 'lucide-react';
 
 const MainLayout: React.FC = () => {
   const {
@@ -61,6 +75,10 @@ const MainLayout: React.FC = () => {
         return <DirectSalesView />;
       case 'custody_cash':
         return <CustodyCashView />;
+      case 'trial_balance':
+        return <TrialBalanceView />;
+      case 'expenses':
+        return <ExpensesView />;
       case 'settlements':
         return <SettlementsView />;
       case 'permissions':
@@ -77,7 +95,7 @@ const MainLayout: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased selection:bg-amber-500 selection:text-slate-950">
+    <div className="min-h-screen h-[100dvh] bg-slate-950 text-slate-100 flex flex-col antialiased selection:bg-amber-500 selection:text-slate-950 overflow-hidden">
       {/* Offline Banner & Service Worker Sync */}
       {!isOnline && (
         <div className="bg-amber-500 text-slate-950 font-bold text-xs py-1.5 px-4 text-center flex flex-wrap items-center justify-center gap-2 no-print shadow-md">
@@ -181,7 +199,7 @@ const MainLayout: React.FC = () => {
       <Header onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />
 
       {/* Main Body with Sidebar & Content */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 min-h-0 flex overflow-hidden w-full">
         {/* Sidebar Nav */}
         <Sidebar
           activeTab={activeTab}
@@ -191,12 +209,75 @@ const MainLayout: React.FC = () => {
         />
 
         {/* Viewport Content */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-          <div className="max-w-7xl mx-auto">
+        <main className="flex-1 min-w-0 min-h-0 overflow-y-auto overflow-x-hidden p-2.5 sm:p-4 lg:p-6 pb-20 md:pb-6 w-full">
+          <div className="max-w-7xl mx-auto w-full min-w-0">
             {renderActiveView()}
           </div>
         </main>
       </div>
+
+      {/* Mobile Bottom Quick Navigation Dock (Visible on Mobile only) */}
+      <nav className="fixed bottom-0 inset-x-0 z-30 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 px-2 py-1.5 flex items-center justify-around md:hidden no-print shadow-xl">
+        <button
+          onClick={() => setActiveTab('dashboard')}
+          className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition cursor-pointer min-w-[54px] ${
+            activeTab === 'dashboard'
+              ? 'text-amber-400 font-extrabold'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <LayoutDashboard className="w-4 h-4" />
+          <span className="text-[10px]">الرئيسية</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('outlets')}
+          className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition cursor-pointer min-w-[54px] ${
+            activeTab === 'outlets'
+              ? 'text-amber-400 font-extrabold'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Store className="w-4 h-4" />
+          <span className="text-[10px]">المنافذ</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('transfers')}
+          className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition cursor-pointer min-w-[54px] ${
+            activeTab === 'transfers'
+              ? 'text-amber-400 font-extrabold'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <ArrowLeftRight className="w-4 h-4" />
+          <span className="text-[10px]">العهد TR</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('trial_balance')}
+          className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition cursor-pointer min-w-[54px] ${
+            activeTab === 'trial_balance'
+              ? 'text-amber-400 font-extrabold'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Scale className="w-4 h-4" />
+          <span className="text-[10px]">المطابقة</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('custody_cash')}
+          className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl transition cursor-pointer min-w-[54px] ${
+            activeTab === 'custody_cash'
+              ? 'text-amber-400 font-extrabold'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Coins className="w-4 h-4" />
+          <span className="text-[10px]">النقدية</span>
+        </button>
+      </nav>
 
       {/* Floating Real-Time Toast Container */}
       <ToastContainer />

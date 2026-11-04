@@ -7,6 +7,7 @@ export const CARD_CATEGORIES_CONFIG: Record<CardCategory, CardPricing> = {
     nominalValue: 200,
     defaultCardsPerSheet: 60,
     defaultWholesaleSheetPrice: 10000, // 10,000 للشيت
+    defaultWholesaleCardPrice: 167, // 167 للكرت الواحد
     color: 'amber',
     badgeBg: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
   },
@@ -16,6 +17,7 @@ export const CARD_CATEGORIES_CONFIG: Record<CardCategory, CardPricing> = {
     nominalValue: 500,
     defaultCardsPerSheet: 60,
     defaultWholesaleSheetPrice: 25000, // 25,000 للشيت
+    defaultWholesaleCardPrice: 417, // 417 للكرت الواحد
     color: 'emerald',
     badgeBg: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
   },
@@ -25,6 +27,8 @@ export const CARD_CATEGORIES_CONFIG: Record<CardCategory, CardPricing> = {
     nominalValue: 1000,
     defaultCardsPerSheet: 60,
     defaultWholesaleSheetPrice: 50000, // 50,000 للشيت
+    defaultWholesaleCardPrice: 833, // 833 للكرت الواحد
+    allowCardUnits: true,
     color: 'blue',
     badgeBg: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
   },
@@ -34,6 +38,8 @@ export const CARD_CATEGORIES_CONFIG: Record<CardCategory, CardPricing> = {
     nominalValue: 3000,
     defaultCardsPerSheet: 60,
     defaultWholesaleSheetPrice: 150000, // 150,000 للشيت
+    defaultWholesaleCardPrice: 2500, // 2,500 للكرت الواحد
+    allowCardUnits: true,
     color: 'purple',
     badgeBg: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
   },
@@ -43,6 +49,8 @@ export const CARD_CATEGORIES_CONFIG: Record<CardCategory, CardPricing> = {
     nominalValue: 5000,
     defaultCardsPerSheet: 60,
     defaultWholesaleSheetPrice: 250000,
+    defaultWholesaleCardPrice: 4200, // 4,200 للكرت الواحد
+    allowCardUnits: true,
     color: 'rose',
     badgeBg: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
   },
@@ -52,6 +60,8 @@ export const CARD_CATEGORIES_CONFIG: Record<CardCategory, CardPricing> = {
     nominalValue: 10000,
     defaultCardsPerSheet: 60,
     defaultWholesaleSheetPrice: 500000,
+    defaultWholesaleCardPrice: 8400, // 8,400 للكرت الواحد
+    allowCardUnits: true,
     color: 'cyan',
     badgeBg: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
   },
@@ -84,16 +94,16 @@ export const INITIAL_CLEAN_OUTLETS: Outlet[] = [
   },
   {
     id: 'OUT-002',
-    name: 'بقالة البركة',
-    ownerName: 'عبدالرحمن قاسم',
+    name: 'منفذ أنا',
+    ownerName: 'المشرف المباشر',
     phone: '771987654',
-    location: 'حي الأندلس - المربع الثالث',
+    location: 'نقطة التوزيع المركزية',
     creditLimit: 100000,
     currentDebt: 0,
     totalDeliveredAmount: 0,
     totalPaidAmount: 0,
     createdAt: '2026-10-01',
-    notes: 'سداد منتظم أسبوعي',
+    notes: 'منفذ التوزيع المباشر المعتمد',
   },
   {
     id: 'OUT-003',

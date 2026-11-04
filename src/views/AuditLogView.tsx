@@ -37,21 +37,56 @@ export const AuditLogView: React.FC = () => {
   const getActionBadge = (type: AuditLogItem['actionType']) => {
     switch (type) {
       case 'BATCH_CREATED':
+        return { label: 'طباعة دفعة جديدة', color: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30' };
       case 'BATCH_UPDATED':
-        return { label: 'طباعة / دفعات', color: 'bg-amber-500/20 text-amber-400 border-amber-500/30' };
+        return { label: 'تعديل دفعة طباعة', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
+      case 'BATCH_DELETED':
+        return { label: 'حذف دفعة طباعة', color: 'bg-rose-500/20 text-rose-300 border-rose-500/30' };
       case 'TRANSFER_CREATED':
         return { label: 'تحويل عهدة (TR)', color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' };
+      case 'TRANSFER_UPDATED':
+        return { label: 'تعديل عهدة (TR)', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
+      case 'TRANSFER_DELETED':
+        return { label: 'حذف عهدة (TR)', color: 'bg-rose-500/20 text-rose-300 border-rose-500/30' };
       case 'DELIVERY_CREATED':
         return { label: 'توريد لمنفذ (DEL)', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' };
+      case 'DELIVERY_UPDATED':
+        return { label: 'تعديل توريد (DEL)', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
+      case 'DELIVERY_DELETED':
+        return { label: 'حذف توريد (DEL)', color: 'bg-rose-500/20 text-rose-300 border-rose-500/30' };
       case 'PAYMENT_RECEIVED':
         return { label: 'قبض نقدية (PAY)', color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' };
+      case 'PAYMENT_UPDATED':
+        return { label: 'تعديل قبض (PAY)', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
+      case 'PAYMENT_DELETED':
+        return { label: 'حذف قبض (PAY)', color: 'bg-rose-500/20 text-rose-300 border-rose-500/30' };
       case 'CASH_HANDOVER':
         return { label: 'تسليم كاش (CSH)', color: 'bg-purple-500/20 text-purple-400 border-purple-500/30' };
+      case 'CASH_HANDOVER_UPDATED':
+        return { label: 'تعديل تسليم كاش', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
+      case 'CASH_HANDOVER_DELETED':
+        return { label: 'حذف تسليم كاش', color: 'bg-rose-500/20 text-rose-300 border-rose-500/30' };
+      case 'DIRECT_SALE_CREATED':
+        return { label: 'بيع مباشر', color: 'bg-teal-500/20 text-teal-300 border-teal-500/30' };
+      case 'DIRECT_SALE_UPDATED':
+        return { label: 'تعديل بيع مباشر', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
+      case 'DIRECT_SALE_DELETED':
+        return { label: 'حذف بيع مباشر', color: 'bg-rose-500/20 text-rose-300 border-rose-500/30' };
       case 'DAMAGE_REPORTED':
         return { label: 'تالف / مرتجع', color: 'bg-rose-500/20 text-rose-400 border-rose-500/30' };
       case 'SETTLEMENT_CREATED':
       case 'SETTLEMENT_RESOLVED':
         return { label: 'تسوية وتصفية', color: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30' };
+      case 'EXPENSE_CREATED':
+        return { label: 'سند صرف مصروفات 💸', color: 'bg-rose-500/20 text-rose-300 border-rose-500/30' };
+      case 'EXPENSE_UPDATED':
+        return { label: 'تعديل سند صرف ✏️', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
+      case 'EXPENSE_DELETED':
+        return { label: 'حذف سند صرف 🗑️', color: 'bg-rose-500/20 text-rose-300 border-rose-500/30' };
+      case 'INTEGRITY_CHECK_EXECUTED':
+        return { label: 'تدقيق وتوفيق المخزون 🛡️', color: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' };
+      case 'CUSTODY_ADJUSTMENT':
+        return { label: 'تسوية وتصحيح العجز ⚖️', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
       case 'SYSTEM_RESET':
         return { label: 'نظام وأمان', color: 'bg-slate-700 text-slate-300 border-slate-600' };
       default:
@@ -125,12 +160,25 @@ export const AuditLogView: React.FC = () => {
             className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500 font-bold"
           >
             <option value="all">جميع أنواع العمليات</option>
-            <option value="BATCH_CREATED">طباعة الدفعات</option>
+            <option value="BATCH_CREATED">طباعة الدفعات (جديد)</option>
             <option value="BATCH_UPDATED">تعديل الدفعات</option>
+            <option value="BATCH_DELETED">حذف الدفعات</option>
             <option value="TRANSFER_CREATED">سندات تحويل العهد (TR)</option>
+            <option value="TRANSFER_UPDATED">تعديل سند تحويل عهدة</option>
+            <option value="TRANSFER_DELETED">إلغاء/حذف سند تحويل</option>
             <option value="DELIVERY_CREATED">سندات التوريد (DEL)</option>
+            <option value="DELIVERY_UPDATED">تعديل سند توريد</option>
+            <option value="DELIVERY_DELETED">حذف سند توريد</option>
             <option value="PAYMENT_RECEIVED">سندات القبض (PAY)</option>
+            <option value="PAYMENT_UPDATED">تعديل سند قبض</option>
+            <option value="PAYMENT_DELETED">حذف سند قبض</option>
             <option value="CASH_HANDOVER">تسليم النقدية (CSH)</option>
+            <option value="CASH_HANDOVER_UPDATED">تعديل تسليم نقدية</option>
+            <option value="CASH_HANDOVER_DELETED">حذف تسليم نقدية</option>
+            <option value="DIRECT_SALE_CREATED">المبيعات المباشرة</option>
+            <option value="DIRECT_SALE_UPDATED">تعديل بيع مباشر</option>
+            <option value="DIRECT_SALE_DELETED">حذف بيع مباشر</option>
+            <option value="EXPENSE_CREATED">سندات المصروفات (EXP)</option>
             <option value="SETTLEMENT_CREATED">التسويات والتصفيات</option>
             <option value="DAMAGE_REPORTED">التالف والمرتجع</option>
           </select>

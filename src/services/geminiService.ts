@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
-import { PrintBatch, Outlet, DeliveryVoucher, PaymentVoucher } from '../types';
+import { PrintBatch, Outlet, DeliveryVoucher, PaymentVoucher, ExpenseItem } from '../types';
 
 export interface NetworkAnalysisResult {
   summary: string;
@@ -8,6 +8,7 @@ export interface NetworkAnalysisResult {
   fastestMovingCategories: string[];
   actionableRecommendations: string[];
   distributorPerformanceNotes: string;
+  costAnalysisNotes?: string;
 }
 
 export async function analyzeNetworkWithGemini({
@@ -17,6 +18,7 @@ export async function analyzeNetworkWithGemini({
   payments,
   distributorCash,
   totalDebt,
+  expenses = [],
 }: {
   batches: PrintBatch[];
   outlets: Outlet[];
@@ -24,6 +26,7 @@ export async function analyzeNetworkWithGemini({
   payments: PaymentVoucher[];
   distributorCash: number;
   totalDebt: number;
+  expenses?: ExpenseItem[];
 }): Promise<NetworkAnalysisResult> {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : '');
 
@@ -41,10 +44,14 @@ export async function analyzeNetworkWithGemini({
         .map((o) => `المنفذ "${o.name}" قارب أو تجاوز سقف الدين (${o.currentDebt.toLocaleString()} / ${o.creditLimit.toLocaleString()} ر.ي)`),
       fastestMovingCategories: ['فئة 200 ريال', 'فئة 500 ريال', 'فئة 1000 ريال'],
       actionableRecommendations: [
-        'المحافظة على وتيرة توريد الكروت أسبوعياً للمنافذ الرئيسية (مثل منفذ أبو شعيب وبقالة البركة).',
+        'المحافظة على وتيرة توريد الكروت أسبوعياً للمنافذ الرئيسية المعتمدة وسرعة تلبية طلباتها.',
         'متابعة تحصيل النقدية من المنافذ عند كل زيارة ميدانية لتجنب تراكم المديونية.',
         'تسوية العهد النقدية أولاً بأول بين الموزع والمسؤول عبر سندات تسليم الكاش (CSH).',
       ],
+      costAnalysisNotes:
+        expenses.length > 0
+          ? `إجمالي المصروفات المسجلة ${expenses.reduce((s, e) => s + e.amount, 0).toLocaleString()} ر.ي (منها ${expenses.filter(e => e.paymentMethod === 'distributor_cash').reduce((s, e) => s + e.amount, 0).toLocaleString()} ر.ي مسددة من عهدة الموزع).`
+          : 'لم تسجل مصروفات بعد؛ يُنصح بقيد تكاليف باقات الإنترنت والمحروقات أولاً بأول.',
       distributorPerformanceNotes:
         distributorCash > 50000
           ? `الموزع يحتفظ بمبلغ نقدي ملحوظ (${distributorCash.toLocaleString()} ر.ي)؛ يُوصى بطلب توريد النقدية إلى صندوق الإدارة.`
@@ -52,13 +59,16 @@ export async function analyzeNetworkWithGemini({
     };
   }
 
+  const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+  const distributorExpenses = expenses.filter((e) => e.paymentMethod === 'distributor_cash').reduce((s, e) => s + e.amount, 0);
+
   try {
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: `
 أنت خبير مالي وإداري لمحاسبة شبكات كروت الإنترنت المحلية في اليمن (نظام قعزان نت / QAZAN-NET).
-قم بتحليل بيانات شبكة الكروت التالية وتقديم تقرير مالي دقيق بصيغة JSON حصراً:
+قم بتحليل بيانات شبكة الكروت والمصروفات التالية وتقديم تقرير مالي دقيق بصيغة JSON حصراً:
 
 البيانات المحاسبية:
 - عدد دفعات الطباعة: ${batches.length}
@@ -68,6 +78,8 @@ export async function analyzeNetworkWithGemini({
 - إجمالي مديونية المنافذ الحالية: ${totalDebt} ر.ي
 - النقدية بحوزة الموزع الميداني: ${distributorCash} ر.ي
 - بيانات المنافذ والديون: ${JSON.stringify(outlets.map((o) => ({ name: o.name, debt: o.currentDebt, limit: o.creditLimit, paid: o.totalPaidAmount })))}
+- إجمالي المصروفات والنفقات التشغيلية: ${totalExpenses} ر.ي (منها ${distributorExpenses} ر.ي مسددة من عهدة الموزع الميداني)
+- تفاصيل بنود المصروفات: ${JSON.stringify(expenses.slice(0, 10).map((e) => ({ title: e.title, category: e.category, amount: e.amount, method: e.paymentMethod })))}
 
 أجب بكائن JSON صالح فقط بالشكل التالي دون نصوص إضافية:
 {
@@ -76,7 +88,8 @@ export async function analyzeNetworkWithGemini({
   "debtRiskAnalysis": ["ملاحظة 1 حول مخاطر الديون", "ملاحظة 2"],
   "fastestMovingCategories": ["فئة كذا الأكثر طلباً"],
   "actionableRecommendations": ["توصية 1", "توصية 2", "توصية 3"],
-  "distributorPerformanceNotes": "تقييم أداء وحركة الموزع الميداني والسيولة المحصلة"
+  "distributorPerformanceNotes": "تقييم أداء وحركة الموزع الميداني والسيولة المحصلة",
+  "costAnalysisNotes": "تحليل هيكل التكاليف والمصروفات الشهرية مقارنة بحجم مبيعات الشبكة ونسب السيولة"
 }
 `,
     });
@@ -88,7 +101,7 @@ export async function analyzeNetworkWithGemini({
   } catch (err) {
     console.warn('Gemini analytics fallback used:', err);
     return {
-      summary: `تحليل شبكة قعزان نت: إجمالي ديون المنافذ ${totalDebt.toLocaleString()} ر.ي، ونقدية الموزع ${distributorCash.toLocaleString()} ر.ي عبر ${deliveries.length} سند توريد.`,
+      summary: `تحليل شبكة قعزان نت: إجمالي ديون المنافذ ${totalDebt.toLocaleString()} ر.ي، ونقدية الموزع ${distributorCash.toLocaleString()} ر.ي عبر ${deliveries.length} سند توريد. إجمالي المصروفات المسجلة ${totalExpenses.toLocaleString()} ر.ي.`,
       financialHealthScore: 88,
       debtRiskAnalysis: [
         'الديون ضمن المستويات التشغيلية المعتادة.',
@@ -98,8 +111,10 @@ export async function analyzeNetworkWithGemini({
       actionableRecommendations: [
         'تصفية الكاش المتجمع لدى الموزع بنهاية كل يوم عمل.',
         'ربط أي توريد كروت جديد بتسديد جزء من المديونية القديمة لكل منفذ.',
+        'مراقبة بنود مصروفات باقات الإنترنت والوقود لتفادي الهدر التشغيلي.',
       ],
       distributorPerformanceNotes: 'حركة الموزع الميداني مستمرة وتسجيل السندات يتم بشكل دقيق.',
+      costAnalysisNotes: `توزيع التكاليف مستقر مع تسجيل ${expenses.length} سندات مصروفات، مع سداد جزء منها عبر عهدة الموزع الميدانية بنجاح.`,
     };
   }
 }

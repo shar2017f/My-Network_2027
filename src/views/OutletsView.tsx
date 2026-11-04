@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Outlet, DeliveryVoucher, PaymentVoucher, CardCategory, SheetLeaf } from '../types';
+import { OutletStatementModal } from '../components/OutletStatementModal';
 import { CARD_CATEGORIES_CONFIG } from '../constants/cardConfig';
 import {
   formatSheetWithBatch,
@@ -73,7 +74,11 @@ export const OutletsView: React.FC = () => {
     updateOutlet,
     deleteOutlet,
     createDelivery,
+    updateDelivery,
+    deleteDelivery,
     createPayment,
+    updatePayment,
+    deletePayment,
     permissions,
   } = useApp();
 
@@ -118,10 +123,142 @@ export const OutletsView: React.FC = () => {
   const [editOutletError, setEditOutletError] = useState('');
   const [editOutletSuccess, setEditOutletSuccess] = useState(false);
 
+  // Edit & Delete Delivery Form State
+  const [editingDelivery, setEditingDelivery] = useState<DeliveryVoucher | null>(null);
+  const [isEditDeliveryOpen, setIsEditDeliveryOpen] = useState(false);
+  const [editDeliveryCards, setEditDeliveryCards] = useState<number>(0);
+  const [editDeliverySheets, setEditDeliverySheets] = useState<number>(0);
+  const [editDeliveryUnitPrice, setEditDeliveryUnitPrice] = useState<number>(0);
+  const [editDeliveryCashPaid, setEditDeliveryCashPaid] = useState<number>(0);
+  const [editDeliveryDate, setEditDeliveryDate] = useState<string>('');
+  const [editDeliveryNotes, setEditDeliveryNotes] = useState<string>('');
+  const [editDeliveryError, setEditDeliveryError] = useState<string>('');
+  const [editDeliverySuccess, setEditDeliverySuccess] = useState<string>('');
+  const [deletingDelivery, setDeletingDelivery] = useState<DeliveryVoucher | null>(null);
+  const [deleteDeliveryError, setDeleteDeliveryError] = useState<string>('');
+
+  // Edit & Delete Payment Form State
+  const [editingPayment, setEditingPayment] = useState<PaymentVoucher | null>(null);
+  const [isEditPaymentOpen, setIsEditPaymentOpen] = useState(false);
+  const [editPaymentAmount, setEditPaymentAmount] = useState<number>(0);
+  const [editPaymentMethod, setEditPaymentMethod] = useState<'cash' | 'transfer'>('cash');
+  const [editPaymentDate, setEditPaymentDate] = useState<string>('');
+  const [editPaymentNotes, setEditPaymentNotes] = useState<string>('');
+  const [editPaymentError, setEditPaymentError] = useState<string>('');
+  const [editPaymentSuccess, setEditPaymentSuccess] = useState<string>('');
+  const [deletingPayment, setDeletingPayment] = useState<PaymentVoucher | null>(null);
+  const [deletePaymentError, setDeletePaymentError] = useState<string>('');
+
+  const openEditDelivery = (del: DeliveryVoucher) => {
+    setEditingDelivery(del);
+    setEditDeliveryCards(del.cardsCount || 0);
+    setEditDeliverySheets(del.sheetsCount || 0);
+    setEditDeliveryUnitPrice(del.deliveryUnit === 'cards' ? (del.unitCardPrice || 0) : del.unitSheetPrice);
+    setEditDeliveryCashPaid(del.cashPaidNow || 0);
+    setEditDeliveryDate(del.date || '');
+    setEditDeliveryNotes(del.notes || '');
+    setEditDeliveryError('');
+    setEditDeliverySuccess('');
+    setIsEditDeliveryOpen(true);
+  };
+
+  const handleEditDeliverySubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingDelivery) return;
+    setEditDeliveryError('');
+    setEditDeliverySuccess('');
+
+    const isCard = editingDelivery.deliveryUnit === 'cards' || (editingDelivery.cardsCount && editingDelivery.cardsCount > 0 && !editingDelivery.sheetsCount);
+    const config = CARD_CATEGORIES_CONFIG[editingDelivery.category];
+
+    const res = updateDelivery(editingDelivery.id, {
+      cardsCount: isCard ? Number(editDeliveryCards) : undefined,
+      sheetsCount: isCard ? Number((Number(editDeliveryCards) / config.defaultCardsPerSheet).toFixed(2)) : Number(editDeliverySheets),
+      unitCardPrice: isCard ? Number(editDeliveryUnitPrice) : undefined,
+      unitSheetPrice: !isCard ? Number(editDeliveryUnitPrice) : undefined,
+      cashPaidNow: Number(editDeliveryCashPaid),
+      date: editDeliveryDate,
+      notes: editDeliveryNotes,
+    });
+
+    if (res.success) {
+      setEditDeliverySuccess('تم تعديل سند التوريد ومطابقة حساب المنفذ بنجاح');
+      setTimeout(() => {
+        setIsEditDeliveryOpen(false);
+        setEditingDelivery(null);
+      }, 1000);
+    } else {
+      setEditDeliveryError(res.message || 'حدث خطأ أثناء تعديل سند التوريد');
+    }
+  };
+
+  const handleDeleteDeliveryConfirm = () => {
+    if (!deletingDelivery) return;
+    setDeleteDeliveryError('');
+    const res = deleteDelivery(deletingDelivery.id);
+    if (res.success) {
+      setDeletingDelivery(null);
+    } else {
+      setDeleteDeliveryError(res.message || 'تعذر حذف سند التوريد');
+    }
+  };
+
+  const openEditPayment = (p: PaymentVoucher) => {
+    setEditingPayment(p);
+    setEditPaymentAmount(p.amount);
+    setEditPaymentMethod(p.paymentMethod);
+    setEditPaymentDate(p.date);
+    setEditPaymentNotes(p.notes || '');
+    setEditPaymentError('');
+    setEditPaymentSuccess('');
+    setIsEditPaymentOpen(true);
+  };
+
+  const handleEditPaymentSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPayment) return;
+    setEditPaymentError('');
+    setEditPaymentSuccess('');
+
+    const res = updatePayment(editingPayment.id, {
+      amount: Number(editPaymentAmount),
+      paymentMethod: editPaymentMethod,
+      date: editPaymentDate,
+      notes: editPaymentNotes,
+    });
+
+    if (res.success) {
+      setEditPaymentSuccess('تم تعديل سند القبض وتسوية رصيد المنفذ بنجاح');
+      setTimeout(() => {
+        setIsEditPaymentOpen(false);
+        setEditingPayment(null);
+      }, 1000);
+    } else {
+      setEditPaymentError(res.message || 'حدث خطأ أثناء تعديل سند القبض');
+    }
+  };
+
+  const handleDeletePaymentConfirm = () => {
+    if (!deletingPayment) return;
+    setDeletePaymentError('');
+    const res = deletePayment(deletingPayment.id);
+    if (res.success) {
+      setDeletingPayment(null);
+    } else {
+      setDeletePaymentError(res.message || 'تعذر حذف سند القبض');
+    }
+  };
+
   // Delivery Form State
   const [deliveryTargetOutletId, setDeliveryTargetOutletId] = useState('');
   const [deliveryDate, setDeliveryDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [deliveryCategory, setDeliveryCategory] = useState<CardCategory>('200');
+  const [deliveryCustodySource, setDeliveryCustodySource] = useState<'distributor_custody' | 'admin_custody'>('distributor_custody');
+  const [deliveryUnitMode, setDeliveryUnitMode] = useState<'sheets' | 'cards'>('sheets');
+  const [deliveryCustomCardsCount, setDeliveryCustomCardsCount] = useState<number>(80);
+  const [deliveryCardUnitPrice, setDeliveryCardUnitPrice] = useState<number>(
+    CARD_CATEGORIES_CONFIG['1000'].defaultWholesaleCardPrice || 833
+  );
   const [selectedBatchId, setSelectedBatchId] = useState<string>('all');
   const [rangeBatchId, setRangeBatchId] = useState<string>('all');
   const [deliverySheetsCount, setDeliverySheetsCount] = useState(1);
@@ -142,22 +279,40 @@ export const OutletsView: React.FC = () => {
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'transfer'>('cash');
   const [paymentNotes, setPaymentNotes] = useState('');
 
-  // Available batches for selected deliveryCategory in current custody
+  // Active custody stock breakdown per category (distributor custody vs admin custody)
+  const custodyStockByCategory = useMemo(() => {
+    const categories: CardCategory[] = ['200', '500', '1000', '3000', '5000', '10000'];
+    const map: Record<CardCategory, { distributorSheets: number; distributorCards: number; adminSheets: number; adminCards: number; activeStockSheets: number; activeStockCards: number }> = {} as any;
+    
+    categories.forEach((cat) => {
+      const perSheet = CARD_CATEGORIES_CONFIG[cat].defaultCardsPerSheet;
+      const distSheetsList = sheets.filter((s) => s.category === cat && s.status === 'distributor_custody');
+      const adminSheetsList = sheets.filter((s) => s.category === cat && s.status === 'admin_custody');
+      const distCards = distSheetsList.reduce((sum, s) => sum + (s.cardsCount || perSheet), 0);
+      const adminCards = adminSheetsList.reduce((sum, s) => sum + (s.cardsCount || perSheet), 0);
+      const distSheets = Number((distCards / perSheet).toFixed(2));
+      const adminSheets = Number((adminCards / perSheet).toFixed(2));
+      const activeStockSheets = deliveryCustodySource === 'distributor_custody' ? distSheets : adminSheets;
+      const activeStockCards = deliveryCustodySource === 'distributor_custody' ? distCards : adminCards;
+      map[cat] = { distributorSheets: distSheets, distributorCards: distCards, adminSheets, adminCards, activeStockSheets, activeStockCards };
+    });
+    return map;
+  }, [sheets, deliveryCustodySource]);
+
+  // Available batches for selected deliveryCategory in the chosen custody source ONLY
   const availableBatchesForCategory = useMemo(() => {
     const custodySheets = sheets.filter(
-      (s) =>
-        s.category === deliveryCategory &&
-        (currentRole === 'distributor'
-          ? s.status === 'distributor_custody'
-          : s.status === 'admin_custody' || s.status === 'distributor_custody')
+      (s) => s.category === deliveryCategory && s.status === deliveryCustodySource
     );
+    const defCards = CARD_CATEGORIES_CONFIG[deliveryCategory].defaultCardsPerSheet;
     const batchMap = new Map<
       string,
-      { batchId: string; batchNumber: number; categoryBatchNumber: number; batchName: string; count: number; date: string }
+      { batchId: string; batchNumber: number; categoryBatchNumber: number; batchName: string; count: number; cardsCount: number; date: string }
     >();
     custodySheets.forEach((s) => {
       const bInfo = batches.find((b) => b.id === s.batchId);
       const catBNum = s.categoryBatchNumber || (bInfo ? getCategoryBatchNumber(bInfo, batches) : 1);
+      const cCount = s.cardsCount || defCards;
       if (!batchMap.has(s.batchId)) {
         batchMap.set(s.batchId, {
           batchId: s.batchId,
@@ -165,23 +320,30 @@ export const OutletsView: React.FC = () => {
           categoryBatchNumber: catBNum,
           batchName: getBatchOrdinalName(catBNum),
           count: 0,
+          cardsCount: 0,
           date: bInfo?.date || s.timestamp?.split('T')[0] || '',
         });
       }
-      batchMap.get(s.batchId)!.count += 1;
+      const item = batchMap.get(s.batchId)!;
+      item.cardsCount += cCount;
+      item.count = Number((item.cardsCount / defCards).toFixed(2));
     });
     return Array.from(batchMap.values()).sort((a, b) => a.categoryBatchNumber - b.categoryBatchNumber);
-  }, [sheets, batches, deliveryCategory, currentRole]);
+  }, [sheets, batches, deliveryCategory, deliveryCustodySource]);
 
-  // Available sheets in custody, sorted strictly by batch sequence (categoryBatchNumber) then sheet number (1..sheetsCount)
+  // Available sheets in the chosen custody source, sorted strictly by batch sequence then sheet number
   const availableSheetsForDelivery = useMemo(() => {
     return sheets
       .filter((s) => {
+        if (!s || !s.sheetCode) return false;
+        const leafNum = s.leafNumber || parseInt(s.sheetCode?.match(/S(\d+)/)?.[1] || '0', 10);
+        if (s.batchId === 'BATCH-2026-005' && leafNum > 15) return false;
+        if (s.sheetCode?.startsWith('QZ-500-B5-S') && (leafNum > 15 || parseInt(s.sheetCode.replace('QZ-500-B5-S', ''), 10) > 15)) return false;
+        const b = batches.find((x) => x.id === s.batchId);
+        if (b && typeof b.sheetsCount === 'number' && leafNum > b.sheetsCount) return false;
+
         const matchCat = s.category === deliveryCategory;
-        const matchStatus =
-          currentRole === 'distributor'
-            ? s.status === 'distributor_custody'
-            : s.status === 'admin_custody' || s.status === 'distributor_custody';
+        const matchStatus = s.status === deliveryCustodySource;
         const matchBatch = selectedBatchId === 'all' || s.batchId === selectedBatchId;
         return matchCat && matchStatus && matchBatch;
       })
@@ -193,7 +355,7 @@ export const OutletsView: React.FC = () => {
         if (catBNumA !== catBNumB) return catBNumA - catBNumB;
         return a.leafNumber - b.leafNumber;
       });
-  }, [sheets, batches, deliveryCategory, currentRole, selectedBatchId]);
+  }, [sheets, batches, deliveryCategory, deliveryCustodySource, selectedBatchId]);
 
   // Sheets grouped by printing batch for crystal-clear visual separation (الدفعة الأولى vs الدفعة الثانية)
   const groupedSheetsForDelivery = useMemo(() => {
@@ -225,26 +387,52 @@ export const OutletsView: React.FC = () => {
     return groups;
   }, [availableSheetsForDelivery, batches]);
 
+  // Total available cards in chosen custody for selected delivery category
+  const totalAvailableCardsForDelivery = useMemo(() => {
+    const config = CARD_CATEGORIES_CONFIG[deliveryCategory];
+    return availableSheetsForDelivery.reduce(
+      (sum, s) => sum + (s.cardsCount || config.defaultCardsPerSheet),
+      0
+    );
+  }, [availableSheetsForDelivery, deliveryCategory]);
+
+  // Computed total price for delivery considering sheets or direct cards
+  const computedDeliveryTotal = useMemo(() => {
+    if (deliveryUnitMode === 'cards') {
+      const config = CARD_CATEGORIES_CONFIG[deliveryCategory];
+      const fullSheets = Math.floor(deliveryCustomCardsCount / config.defaultCardsPerSheet);
+      const looseCards = deliveryCustomCardsCount % config.defaultCardsPerSheet;
+      return (fullSheets * deliveryUnitPrice) + (looseCards * deliveryCardUnitPrice);
+    }
+    return deliverySheetsCount * deliveryUnitPrice;
+  }, [
+    deliveryUnitMode,
+    deliveryCustomCardsCount,
+    deliveryCategory,
+    deliveryUnitPrice,
+    deliveryCardUnitPrice,
+    deliverySheetsCount,
+  ]);
+
   // Open delivery modal with smart defaults
   const openDeliveryModal = (targetOutletId?: string) => {
     const defaultOutlet = targetOutletId || outlets[0]?.id || '';
     setDeliveryTargetOutletId(defaultOutlet);
     const today = new Date().toISOString().split('T')[0];
     setDeliveryDate(today);
-    setDeliveryCategory('200');
+    setDeliveryCategory('1000');
+    setDeliveryUnitMode('sheets');
+    setDeliveryCustomCardsCount(80);
     setSelectedBatchId('all');
     setRangeBatchId('all');
     setRangeFrom('');
     setRangeTo('');
     setDeliveryError('');
-    setDeliveryUnitPrice(CARD_CATEGORIES_CONFIG['200'].defaultWholesaleSheetPrice);
+    setDeliveryUnitPrice(CARD_CATEGORIES_CONFIG['1000'].defaultWholesaleSheetPrice);
+    setDeliveryCardUnitPrice(CARD_CATEGORIES_CONFIG['1000'].defaultWholesaleCardPrice || 833);
 
     const avSheets = sheets.filter(
-      (s) =>
-        s.category === '200' &&
-        (currentRole === 'distributor'
-          ? s.status === 'distributor_custody'
-          : s.status === 'admin_custody' || s.status === 'distributor_custody')
+      (s) => s.category === '1000' && s.status === deliveryCustodySource
     );
     const initialSelected = avSheets.slice(0, 1).map((s) => s.sheetCode);
     setSelectedSheetCodes(initialSelected);
@@ -271,17 +459,20 @@ export const OutletsView: React.FC = () => {
     setRangeBatchId('all');
     setRangeFrom('');
     setRangeTo('');
-    setDeliveryUnitPrice(CARD_CATEGORIES_CONFIG[cat].defaultWholesaleSheetPrice);
+    const config = CARD_CATEGORIES_CONFIG[cat];
+    setDeliveryUnitPrice(config.defaultWholesaleSheetPrice);
+    setDeliveryCardUnitPrice(
+      config.defaultWholesaleCardPrice || Math.round(config.defaultWholesaleSheetPrice / config.defaultCardsPerSheet)
+    );
     const avSheets = sheets.filter(
-      (s) =>
-        s.category === cat &&
-        (currentRole === 'distributor'
-          ? s.status === 'distributor_custody'
-          : s.status === 'admin_custody' || s.status === 'distributor_custody')
+      (s) => s.category === cat && s.status === deliveryCustodySource
     );
     const initialSelected = avSheets.slice(0, 1).map((s) => s.sheetCode);
     setSelectedSheetCodes(initialSelected);
     setDeliverySheetsCount(initialSelected.length > 0 ? initialSelected.length : 1);
+    if (!config.allowCardUnits && deliveryUnitMode === 'cards') {
+      setDeliveryUnitMode('sheets');
+    }
   };
 
   // Toggle individual sheet code selection
@@ -428,32 +619,124 @@ export const OutletsView: React.FC = () => {
   // Submit Delivery (DEL)
   const handleDeliverySubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!deliveryTargetOutletId) return;
+    if (!deliveryTargetOutletId) {
+      setDeliveryError('يرجى اختيار المنفذ المستلم أولاً');
+      return;
+    }
+
+    if (deliveryUnitMode === 'cards') {
+      const requestedCards = Number(deliveryCustomCardsCount);
+      if (requestedCards <= 0) {
+        setDeliveryError('يرجى إدخال عدد كروت صحيح (أكبر من 0)');
+        return;
+      }
+      if (totalAvailableCardsForDelivery === 0) {
+        setDeliveryError(
+          `رصيدك المتبقي من فئة ${deliveryCategory} ر.ي نفذ بالكامل (0 كرت متاح بعهدتك). يمنع النظام إتمام توريد كروت غير متوفرة لضمان دقة المخزون.`
+        );
+        return;
+      }
+      if (requestedCards > totalAvailableCardsForDelivery) {
+        setDeliveryError(
+          `الكمية المطلوبة (${requestedCards} كرت) تتجاوز الرصيد المتبقي بعهدتك (${totalAvailableCardsForDelivery} كرت). يمنع النظام التوريد لضمان دقة الرصيد والمطابقة المحاسبية.`
+        );
+        return;
+      }
+
+      setDeliveryError('');
+
+      try {
+        const voucher = createDelivery({
+          outletId: deliveryTargetOutletId,
+          category: deliveryCategory,
+          cardsCount: requestedCards,
+          deliveryUnit: 'cards',
+          unitSheetPrice: Number(deliveryUnitPrice),
+          unitCardPrice: Number(deliveryCardUnitPrice),
+          cashPaidNow: Number(deliveryCashPaid),
+          notes: deliveryNotes,
+          date: deliveryDate || new Date().toISOString().split('T')[0],
+          batchId: selectedBatchId !== 'all' ? selectedBatchId : undefined,
+          custodySource: deliveryCustodySource,
+        });
+
+        setIsDeliveryModalOpen(false);
+        setSelectedVoucherForPrint({ type: 'DEL', data: voucher });
+      } catch (err: any) {
+        setDeliveryError(err?.message || 'حدث خطأ أثناء إصدار سند التوريد');
+      }
+      return;
+    }
+
+    const requestedCount = Number(deliverySheetsCount);
+
+    if (availableSheetsForDelivery.length === 0) {
+      setDeliveryError(
+        `رصيدك المتبقي من فئة ${deliveryCategory} ر.ي نفذ بالكامل (0 شيت متاح بعهدتك). يمنع النظام إتمام توريد كروت غير متوفرة لضمان دقة المخزون.`
+      );
+      return;
+    }
+
+    if (requestedCount <= 0) {
+      setDeliveryError('يرجى تحديد عدد شيتات صحيح (شيت واحد على الأقل)');
+      return;
+    }
+
+    if (requestedCount > availableSheetsForDelivery.length) {
+      setDeliveryError(
+        `الكمية المطلوبة (${requestedCount} شيت) تتجاوز الرصيد المتبقي في عهدتك (${availableSheetsForDelivery.length} شيت). يمنع النظام التوريد لضمان دقة المخزون والمطابقة المحاسبية.`
+      );
+      return;
+    }
 
     let finalCodes = selectedSheetCodes;
     if (finalCodes.length === 0) {
-      finalCodes = availableSheetsForDelivery.slice(0, Number(deliverySheetsCount)).map((s) => s.sheetCode);
+      finalCodes = availableSheetsForDelivery.slice(0, requestedCount).map((s) => s.sheetCode);
     }
+
     if (finalCodes.length === 0) {
       setDeliveryError('يرجى تحديد شيت واحد على الأقل من القائمة لتوريده للمنفذ');
       return;
     }
+
+    if (finalCodes.length < requestedCount) {
+      setDeliveryError(
+        `عدد الشيتات المحددة (${finalCodes.length} شيت) أقل من الكمية المطلوبة (${requestedCount} شيت). يرجى تحديد باقي الشيتات من القائمة.`
+      );
+      return;
+    }
+
+    // Verify all selected sheets actually exist in availableSheetsForDelivery
+    const availableSet = new Set(availableSheetsForDelivery.map((s) => s.sheetCode));
+    const invalidCodes = finalCodes.filter((code) => !availableSet.has(code));
+    if (invalidCodes.length > 0) {
+      setDeliveryError(
+        `الشيتات التالية ليست في عهدتك الحالية أو تم توريدها مسبقاً: ${invalidCodes.join(', ')}`
+      );
+      return;
+    }
+
     setDeliveryError('');
 
-    const voucher = createDelivery({
-      outletId: deliveryTargetOutletId,
-      category: deliveryCategory,
-      sheetCodes: finalCodes,
-      sheetsCount: finalCodes.length,
-      unitSheetPrice: Number(deliveryUnitPrice),
-      cashPaidNow: Number(deliveryCashPaid),
-      notes: deliveryNotes,
-      date: deliveryDate || new Date().toISOString().split('T')[0],
-      batchId: selectedBatchId !== 'all' ? selectedBatchId : undefined,
-    });
+    try {
+      const voucher = createDelivery({
+        outletId: deliveryTargetOutletId,
+        category: deliveryCategory,
+        sheetCodes: finalCodes,
+        sheetsCount: finalCodes.length,
+        unitSheetPrice: Number(deliveryUnitPrice),
+        cashPaidNow: Number(deliveryCashPaid),
+        notes: deliveryNotes,
+        date: deliveryDate || new Date().toISOString().split('T')[0],
+        batchId: selectedBatchId !== 'all' ? selectedBatchId : undefined,
+        custodySource: deliveryCustodySource,
+      });
 
-    setIsDeliveryModalOpen(false);
-    setSelectedVoucherForPrint({ type: 'DEL', data: voucher });
+      setIsDeliveryModalOpen(false);
+      setSelectedVoucherForPrint({ type: 'DEL', data: voucher });
+    } catch (err: any) {
+      setDeliveryError(err?.message || 'حدث خطأ أثناء إصدار سند التوريد');
+    }
   };
 
   // Submit Payment (PAY)
@@ -485,6 +768,18 @@ export const OutletsView: React.FC = () => {
       .map((s) => formatSheetWithBatch(s, undefined, batches))
       .join('، ');
 
+    const config = CARD_CATEGORIES_CONFIG[voucher.category];
+    const fullSheets = Math.floor(voucher.cardsCount / (config.defaultCardsPerSheet || 60));
+    const looseCards = voucher.cardsCount % (config.defaultCardsPerSheet || 60);
+
+    const quantityLine = voucher.deliveryUnit === 'cards'
+      ? `الكمية الموردة: ${voucher.cardsCount} كرت (${fullSheets > 0 ? `${fullSheets} شيت كامل + ` : ''}${looseCards} كرت مجزأ)\n`
+      : `الكمية: ${voucher.sheetsCount} شيت (${voucher.cardsCount} كرت)\n`;
+
+    const priceLine = voucher.deliveryUnit === 'cards'
+      ? `سعر الكرت: ${(voucher.unitCardPrice || config.defaultWholesaleCardPrice || 833).toLocaleString()} ر.ي • سعر الشيت: ${voucher.unitSheetPrice.toLocaleString()} ر.ي\n`
+      : `سعر الشيت بالجملة: ${voucher.unitSheetPrice.toLocaleString()} ر.ي\n`;
+
     const text =
       `*سند توريد كروت إنترنت رسمي - شبكة قعزان نت*\n` +
       `━━━━━━━━━━━━━━━━━━━\n` +
@@ -492,9 +787,9 @@ export const OutletsView: React.FC = () => {
       `📅 تاريخ التوريد: ${voucher.date} (${formatArabicDate(voucher.date)})\n` +
       `المنفذ المستلم: ${voucher.outletName}\n` +
       `الفئة: كروت ${voucher.category} ريال\n` +
-      `الكمية: ${voucher.sheetsCount} شيت (${voucher.cardsCount} كرت)\n` +
+      quantityLine +
       (sheetLeafNumbers ? `🔢 أرقام الشيتات الموزعة من الدفعة: ${sheetLeafNumbers}\n` : '') +
-      `سعر الشيت بالجملة: ${voucher.unitSheetPrice.toLocaleString()} ر.ي\n` +
+      priceLine +
       `إجمالي القيمة: ${voucher.totalAmount.toLocaleString()} ر.ي\n` +
       `💵 المدفوع كاش فوراً: ${voucher.cashPaidNow.toLocaleString()} ر.ي\n` +
       `*الدين المقيد على المنفذ:* ${voucher.remainingDebt.toLocaleString()} ر.ي\n` +
@@ -1142,9 +1437,27 @@ export const OutletsView: React.FC = () => {
                             <span className="text-slate-500">غير محدد</span>
                           )}
                         </div>
-                        <span className="text-[10px] text-slate-500 mt-1 block">
-                          الكمية: {delivery.sheetsCount} شيت ({delivery.cardsCount} كرت) • سعر الشيت:{' '}
-                          {delivery.unitSheetPrice.toLocaleString()} ر.ي
+                        <span className="text-[10px] text-slate-400 mt-1 block">
+                          {delivery.deliveryUnit === 'cards' ? (
+                            <>
+                              الكمية:{' '}
+                              <strong className="text-emerald-400 font-extrabold">{delivery.cardsCount} كرت</strong>{' '}
+                              ({Math.floor(delivery.cardsCount / (CARD_CATEGORIES_CONFIG[delivery.category]?.defaultCardsPerSheet || 60))} شيت{' '}
+                              {delivery.cardsCount % (CARD_CATEGORIES_CONFIG[delivery.category]?.defaultCardsPerSheet || 60) > 0
+                                ? `+ ${delivery.cardsCount % (CARD_CATEGORIES_CONFIG[delivery.category]?.defaultCardsPerSheet || 60)} كرت مجزأ`
+                                : 'كامل'}
+                              ) • سعر الكرت:{' '}
+                              <strong className="text-white font-mono">
+                                {(delivery.unitCardPrice || CARD_CATEGORIES_CONFIG[delivery.category]?.defaultWholesaleCardPrice || Math.round(delivery.unitSheetPrice / 60)).toLocaleString()}
+                              </strong>{' '}
+                              ر.ي
+                            </>
+                          ) : (
+                            <>
+                              الكمية: {delivery.sheetsCount} شيت ({delivery.cardsCount} كرت) • سعر الشيت:{' '}
+                              {delivery.unitSheetPrice.toLocaleString()} ر.ي
+                            </>
+                          )}
                         </span>
                       </div>
 
@@ -1182,6 +1495,29 @@ export const OutletsView: React.FC = () => {
                       </span>
 
                       <div className="flex items-center gap-2">
+                        {currentRole === 'admin' && (
+                          <>
+                            <button
+                              onClick={() => openEditDelivery(delivery)}
+                              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500 text-amber-300 hover:text-slate-950 font-bold transition text-[11px] cursor-pointer border border-amber-500/30"
+                              title="تعديل سند التوريد ومطابقة الحساب"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>تعديل</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setDeletingDelivery(delivery);
+                                setDeleteDeliveryError('');
+                              }}
+                              className="p-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500 text-rose-300 hover:text-white font-bold transition text-[11px] cursor-pointer border border-rose-500/30"
+                              title="حذف وإلغاء سند التوريد"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+
                         <a
                           href={generateDeliveryWhatsAppLink(delivery)}
                           target="_blank"
@@ -1194,7 +1530,7 @@ export const OutletsView: React.FC = () => {
 
                         <button
                           onClick={() => setSelectedVoucherForPrint({ type: 'DEL', data: delivery })}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-bold transition text-[11px] cursor-pointer"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-200 hover:text-white font-bold transition text-[11px] cursor-pointer"
                         >
                           <Printer className="w-3.5 h-3.5" />
                           <span>طباعة السند</span>
@@ -1283,6 +1619,28 @@ export const OutletsView: React.FC = () => {
                       </div>
 
                       <div className="flex items-center gap-1.5">
+                        {currentRole === 'admin' && (
+                          <>
+                            <button
+                              onClick={() => openEditPayment(payment)}
+                              className="p-2 rounded-xl bg-amber-500/15 text-amber-300 hover:bg-amber-500 hover:text-slate-950 transition cursor-pointer border border-amber-500/30"
+                              title="تعديل سند القبض وتسوية حساب المنفذ"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                setDeletingPayment(payment);
+                                setDeletePaymentError('');
+                              }}
+                              className="p-2 rounded-xl bg-rose-500/15 text-rose-300 hover:bg-rose-500 hover:text-white transition cursor-pointer border border-rose-500/30"
+                              title="حذف سند القبض وإعادة قيد المبلغ على المنفذ"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </>
+                        )}
+
                         <a
                           href={generateWhatsAppLink(payment)}
                           target="_blank"
@@ -1722,43 +2080,157 @@ export const OutletsView: React.FC = () => {
                 })()}
               </div>
 
-              {/* 3. Category Picker */}
+              {/* 2.5 Custody Source Selector (المخزون المسحوب منه التوريد للمنفذ) */}
+              {currentRole === 'admin' ? (
+                <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-extrabold text-slate-300 flex items-center gap-1.5">
+                      <Layers className="w-4 h-4 text-blue-400" />
+                      <span>المخزون المسحوب منه التوريد للمنفذ:</span>
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-bold">
+                      حدد العهدة التي ستخرج منها الشيتات
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeliveryCustodySource('distributor_custody');
+                        setSelectedSheetCodes([]);
+                        setDeliverySheetsCount(0);
+                      }}
+                      className={`p-2.5 rounded-xl text-xs font-bold border transition text-center cursor-pointer ${
+                        deliveryCustodySource === 'distributor_custody'
+                          ? 'bg-blue-600 text-white border-blue-500 shadow-md'
+                          : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      🚚 من عهدة الموزع الميداني (المعتاد)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeliveryCustodySource('admin_custody');
+                        setSelectedSheetCodes([]);
+                        setDeliverySheetsCount(0);
+                      }}
+                      className={`p-2.5 rounded-xl text-xs font-bold border transition text-center cursor-pointer ${
+                        deliveryCustodySource === 'admin_custody'
+                          ? 'bg-blue-600 text-white border-blue-500 shadow-md'
+                          : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      🏢 من مخزن المسؤول المباشر
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-300 flex items-center justify-between font-bold">
+                  <span>المخزون المتاح للتوزيع:</span>
+                  <span className="text-white">عهدة الموزع الميدانية الخاصة بك</span>
+                </div>
+              )}
+
+              {/* 3. Category Picker with Accurate Live Stock Status */}
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">فئة الكرت المورد:</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-slate-300">فئة الكرت المورد:</label>
+                  <span className="text-[11px] font-bold text-slate-400">
+                    المتاح للتوزيع في {deliveryCustodySource === 'distributor_custody' ? 'عهدة الموزع' : 'مخزن المسؤول'}:{' '}
+                    <span className="text-emerald-400 font-extrabold">
+                      {custodyStockByCategory[deliveryCategory]?.activeStockSheets || 0} شيت ({totalAvailableCardsForDelivery} كرت)
+                    </span>
+                  </span>
+                </div>
                 <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                  {Object.keys(CARD_CATEGORIES_CONFIG).map((cat) => {
-                    const avCount = sheets.filter(
-                      (s) =>
-                        s.category === cat &&
-                        (currentRole === 'distributor'
-                          ? s.status === 'distributor_custody'
-                          : s.status === 'admin_custody' || s.status === 'distributor_custody')
-                    ).length;
+                  {Object.keys(CARD_CATEGORIES_CONFIG).map((catKey) => {
+                    const cat = catKey as CardCategory;
+                    const stock = custodyStockByCategory[cat];
+                    const activeStock = stock?.activeStockSheets || 0;
+                    const activeCards = stock?.activeStockCards || 0;
+                    const isExhausted = activeCards === 0;
 
                     return (
                       <button
                         type="button"
                         key={cat}
-                        onClick={() => handleDeliveryCatChange(cat as CardCategory)}
+                        onClick={() => handleDeliveryCatChange(cat)}
                         className={`p-2 rounded-xl text-xs font-bold border transition text-center cursor-pointer ${
                           deliveryCategory === cat
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-600/25'
+                            ? isExhausted
+                              ? 'bg-rose-500/20 text-rose-300 border-rose-500 shadow-md'
+                              : 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-600/25'
+                            : isExhausted
+                            ? 'bg-slate-950 border-rose-500/30 text-rose-400/90 hover:border-rose-500/50'
                             : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
                         }`}
                       >
-                        <div className="font-extrabold">فئة {cat}</div>
+                        <div className="flex items-center justify-center gap-1 font-extrabold">
+                          <span>فئة {cat}</span>
+                          {isExhausted && <span className="text-[9px] text-rose-400">🚨</span>}
+                        </div>
                         <div
                           className={`text-[10px] mt-0.5 ${
-                            deliveryCategory === cat ? 'text-blue-200' : 'text-slate-400'
+                            isExhausted
+                              ? 'text-rose-400 font-bold'
+                              : deliveryCategory === cat
+                              ? 'text-blue-200 font-bold'
+                              : 'text-slate-400'
                           }`}
                         >
-                          عهدة: {avCount}
+                          {isExhausted ? 'نافدة (0)' : `${activeStock} ش (${activeCards} ك)`}
                         </div>
                       </button>
                     );
                   })}
                 </div>
+
+                {/* Stock distribution hint bar */}
+                <div className="flex items-center justify-between text-[11px] text-slate-400 bg-slate-950 px-3 py-2 rounded-xl border border-slate-800 mt-2">
+                  <span>
+                    بعهدة الموزع الميداني:{' '}
+                    <strong className="text-emerald-400">
+                      {custodyStockByCategory[deliveryCategory]?.distributorSheets || 0} شيت ({custodyStockByCategory[deliveryCategory]?.distributorCards || 0} كرت)
+                    </strong>
+                  </span>
+                  <span>
+                    بمخزن المسؤول المباشر:{' '}
+                    <strong className="text-amber-400">
+                      {custodyStockByCategory[deliveryCategory]?.adminSheets || 0} شيت ({custodyStockByCategory[deliveryCategory]?.adminCards || 0} كرت)
+                    </strong>
+                  </span>
+                </div>
               </div>
+
+              {/* Red Warning Banner when Category is Exhausted in the Selected Custody */}
+              {totalAvailableCardsForDelivery === 0 && (
+                <div className="p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-200 text-xs space-y-2 animate-in fade-in">
+                  <div className="flex items-center gap-2 font-bold text-rose-400 text-sm">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                    <span>⛔ لا يمكن التوريد: الكمية نافدة من المخزون المتاح للتوزيع!</span>
+                  </div>
+                  <p className="leading-relaxed">
+                    لا توجد أي شيتات فئة {deliveryCategory} ريال متوفرة حالياً في{' '}
+                    <strong>{deliveryCustodySource === 'distributor_custody' ? 'عهدة الموزع الميداني' : 'مخزن المسؤول المباشر'}</strong>.
+                  </p>
+                  {deliveryCustodySource === 'distributor_custody' &&
+                    (custodyStockByCategory[deliveryCategory]?.adminCards || 0) > 0 && (
+                      <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px] font-bold">
+                        💡 ملاحظة: يتوفر {custodyStockByCategory[deliveryCategory]?.adminSheets} شيت ({custodyStockByCategory[deliveryCategory]?.adminCards} كرت) في مخزن المسؤول لم يتم تحويلها بعد. يجب أولاً إصدار سند تحويل عهدة (TR) للموزع لكي يستطيع توزيعها للمنافذ!
+                      </div>
+                    )}
+                  {deliveryCustodySource === 'admin_custody' &&
+                    (custodyStockByCategory[deliveryCategory]?.distributorCards || 0) > 0 && (
+                      <div className="p-2 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-300 text-[11px] font-bold">
+                        💡 ملاحظة: الشيتات ({custodyStockByCategory[deliveryCategory]?.distributorSheets} شيت / {custodyStockByCategory[deliveryCategory]?.distributorCards} كرت) قد تم تحويلها بالفعل إلى عهدة الموزع الميداني، ولا تتوفر في مخزن المسؤول المباشر. يمكنك التبديل بالأعلى إلى "من عهدة الموزع الميداني".
+                      </div>
+                    )}
+                  <p className="text-[11px] text-rose-300 font-extrabold">
+                    يمنع النظام التوريد لضمان دقة الرصيد والمطابقة المحاسبية ومنع العجز الوهمي.
+                  </p>
+                </div>
+              )}
 
               {deliveryError && (
                 <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center gap-2">
@@ -1767,219 +2239,388 @@ export const OutletsView: React.FC = () => {
                 </div>
               )}
 
-              {/* 4. BATCH & SHEET NUMBERS SELECTOR (خيار رقم الشيت الموزع له من الدفعة) */}
-              <div className="bg-slate-950 p-3.5 rounded-2xl border border-emerald-500/30 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <label className="text-xs font-extrabold text-emerald-400 flex items-center gap-1.5">
-                    <Layers className="w-4 h-4" />
-                    <span>خيار أرقام الشيتات الموزعة من الدفعة:</span>
-                  </label>
-                  <span className="text-[11px] font-bold text-emerald-300 bg-emerald-500/10 px-2.5 py-0.5 rounded-md border border-emerald-500/20">
-                    محدد: {selectedSheetCodes.length} شيت من {availableSheetsForDelivery.length} متاح
-                  </span>
-                </div>
-
-                {/* Batch Selector Dropdown */}
-                {availableBatchesForCategory.length > 1 && (
-                  <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-xl border border-slate-800 text-xs">
-                    <span className="text-slate-400 shrink-0 font-bold">تحديد الدفعة:</span>
-                    <select
-                      value={selectedBatchId}
-                      onChange={(e) => {
-                        setSelectedBatchId(e.target.value);
-                        setSelectedSheetCodes([]);
-                        setDeliverySheetsCount(0);
-                      }}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-white focus:outline-hidden font-bold"
+              {/* 3.5 Delivery Unit Mode Toggle (when category supports card units like 1000, 3000, 5000, 10000) */}
+              {CARD_CATEGORIES_CONFIG[deliveryCategory]?.allowCardUnits && (
+                <div className="bg-slate-950 p-3 rounded-2xl border border-blue-500/30 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-extrabold text-blue-400 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-amber-400" />
+                      <span>طريقة التوريد للمنفذ (فئة {deliveryCategory} ريال):</span>
+                    </label>
+                    <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                      متاح التوريد بالشيت أو بالكروت
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryUnitMode('sheets')}
+                      className={`p-2.5 rounded-xl text-xs font-bold border transition text-center cursor-pointer ${
+                        deliveryUnitMode === 'sheets'
+                          ? 'bg-blue-600 text-white border-blue-500 shadow-md'
+                          : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
                     >
-                      <option value="all">
-                        جميع الدفعات المتاحة ({availableBatchesForCategory.reduce((a, b) => a + b.count, 0)} شيت)
-                      </option>
-                      {availableBatchesForCategory.map((b) => (
-                        <option key={b.batchId} value={b.batchId}>
-                          {b.batchName} ({b.date}) — متوفر: {b.count} شيت
-                        </option>
-                      ))}
-                    </select>
+                      📄 بالشيت الكامل (60 كرت / شيت)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeliveryUnitMode('cards');
+                        if (!deliveryCustomCardsCount || deliveryCustomCardsCount <= 0) {
+                          setDeliveryCustomCardsCount(80);
+                        }
+                      }}
+                      className={`p-2.5 rounded-xl text-xs font-bold border transition text-center cursor-pointer ${
+                        deliveryUnitMode === 'cards'
+                          ? 'bg-emerald-600 text-white border-emerald-500 shadow-md'
+                          : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      🎴 بعدد الكروت المباشر (80 كرت، 20 كرت...)
+                    </button>
                   </div>
-                )}
+                </div>
+              )}
 
-                {availableSheetsForDelivery.length === 0 ? (
-                  <div className="p-3 text-center rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-400 text-xs font-bold">
-                    ⚠️ لا توجد شيتات فئة {deliveryCategory} في عهدتك حالياً. يرجى طلب تحويل عهدة من المسؤول أولاً.
+              {/* 4. SELECTION SECTION: EITHER DIRECT CARDS OR FULL SHEETS */}
+              {deliveryUnitMode === 'cards' ? (
+                /* CARD UNIT MODE: Direct count, presets (80, 20), and auto-slicing decomposition */
+                <div className="bg-slate-950 p-4 rounded-2xl border border-emerald-500/40 space-y-3.5 animate-in fade-in">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pb-2 border-b border-slate-800">
+                    <label className="text-xs font-extrabold text-emerald-400 flex items-center gap-1.5">
+                      <Layers className="w-4 h-4" />
+                      <span>توريد كروت فئة {deliveryCategory} ريال بالعدد المباشر:</span>
+                    </label>
+                    <span className="text-[11px] font-bold text-slate-300">
+                      المتوفر بعهدتك: <strong className="text-emerald-400">{totalAvailableCardsForDelivery} كرت</strong>{' '}
+                      ({Math.floor(totalAvailableCardsForDelivery / CARD_CATEGORIES_CONFIG[deliveryCategory].defaultCardsPerSheet)} شيت و{' '}
+                      {totalAvailableCardsForDelivery % CARD_CATEGORIES_CONFIG[deliveryCategory].defaultCardsPerSheet} كرت)
+                    </span>
                   </div>
-                ) : (
-                  <>
-                    {/* Quick Selection Presets */}
+
+                  {/* Quick Card Presets: 20, 30, 40, 60, 80, 100, 120 */}
+                  <div>
+                    <span className="text-[11px] text-slate-400 font-bold block mb-1.5">
+                      اختيار سريع لعدد الكروت الأكثر طلباً:
+                    </span>
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={selectAllAvailableSheets}
-                        className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-bold text-slate-300 hover:text-white transition cursor-pointer"
-                      >
-                        تحديد الكل ({availableSheetsForDelivery.length})
-                      </button>
-                      {[1, 2, 3, 5, 10].map(
-                        (num) =>
-                          availableSheetsForDelivery.length >= num && (
-                            <button
-                              key={num}
-                              type="button"
-                              onClick={() => {
-                                const codes = availableSheetsForDelivery
-                                  .slice(0, num)
-                                  .map((s) => s.sheetCode);
-                                setSelectedSheetCodes(codes);
-                                setDeliverySheetsCount(codes.length);
-                              }}
-                              className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-bold text-slate-300 hover:text-white transition cursor-pointer"
-                            >
-                              {num} شيت
-                            </button>
-                          )
-                      )}
-                      <button
-                        type="button"
-                        onClick={clearSelectedSheets}
-                        className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-bold text-rose-400 hover:text-rose-300 transition cursor-pointer"
-                      >
-                        مسح التحديد
-                      </button>
-                    </div>
-
-                    {/* Sequential Range Selection (من شيت # إلى شيت #) */}
-                    <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 flex items-center gap-2 text-xs">
-                      <span className="text-slate-400 font-bold shrink-0">تحديد بالمدى:</span>
-                      <div className="flex items-center gap-1.5 flex-1">
-                        <span className="text-[10px] text-slate-500">من شيت #</span>
-                        <input
-                          type="number"
-                          placeholder="مثال: 1"
-                          value={rangeFrom}
-                          onChange={(e) => setRangeFrom(e.target.value === '' ? '' : Number(e.target.value))}
-                          className="w-16 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-center font-bold text-white text-xs font-mono"
-                        />
-                        <span className="text-[10px] text-slate-500">إلى #</span>
-                        <input
-                          type="number"
-                          placeholder="مثال: 5"
-                          value={rangeTo}
-                          onChange={(e) => setRangeTo(e.target.value === '' ? '' : Number(e.target.value))}
-                          className="w-16 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-center font-bold text-white text-xs font-mono"
-                        />
-                        <button
-                          type="button"
-                          onClick={applySequentialRange}
-                          className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition cursor-pointer"
-                        >
-                          تطبيق المدى
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Sheet Badges Clickable Grid */}
-                    <div className="max-h-40 overflow-y-auto p-2 rounded-xl bg-slate-900/90 border border-slate-800 flex flex-wrap gap-1.5">
-                      {availableSheetsForDelivery.map((sheet) => {
-                        const isSelected = selectedSheetCodes.includes(sheet.sheetCode);
-                        const batchInfo = batches.find((b) => b.id === sheet.batchId);
-
-                        const catBNum = sheet.categoryBatchNumber || (batchInfo ? getCategoryBatchNumber(batchInfo, batches) : 1);
-                        const ordinalBadge = ORDINAL_ARABIC[catBNum] || `د.${catBNum}`;
-
+                      {[20, 30, 40, 60, 80, 100, 120].map((count) => {
+                        const isSelected = deliveryCustomCardsCount === count;
+                        const full = Math.floor(count / 60);
+                        const loose = count % 60;
+                        const label = full > 0 && loose > 0 ? `${count} كرت (${full}ش+${loose}ك)` : `${count} كرت`;
                         return (
                           <button
+                            key={count}
                             type="button"
-                            key={sheet.sheetCode}
-                            onClick={() => toggleSheetCode(sheet.sheetCode)}
-                            title={`${formatSheetWithBatch(sheet, batchInfo, batches)} (${sheet.sheetCode})`}
-                            className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 transition cursor-pointer border ${
+                            onClick={() => setDeliveryCustomCardsCount(count)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer border ${
                               isSelected
-                                ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
-                                : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                                ? 'bg-emerald-600 text-white border-emerald-500 shadow-md font-black'
+                                : 'bg-slate-900 border-slate-700 text-slate-200 hover:bg-slate-800'
                             }`}
                           >
-                            {isSelected ? (
-                              <CheckCircle className="w-3.5 h-3.5 text-white" />
-                            ) : (
-                              <div className="w-3.5 h-3.5 rounded-full border border-slate-600" />
-                            )}
-                            <span>شيت #{sheet.leafNumber}</span>
-                            <span className="text-[10px] opacity-85 font-sans font-normal">
-                              ({ordinalBadge})
-                            </span>
+                            {label}
                           </button>
                         );
                       })}
                     </div>
+                  </div>
 
-                    {/* Selected Numbers Summary Banner */}
-                    <div className="text-[11px] text-slate-300 bg-emerald-950/30 p-2.5 rounded-xl border border-emerald-500/20 flex flex-col gap-1">
-                      <div className="flex items-center justify-between font-bold">
-                        <span className="text-emerald-300 flex items-center gap-1">
-                          <Check className="w-3.5 h-3.5 text-emerald-400" />
-                          <span>أرقام الشيتات المختارة للتوريد:</span>
-                        </span>
-                        <span className="text-emerald-400 font-extrabold">
-                          {selectedSheetCodes.length} شيت (
-                          {selectedSheetCodes.length *
-                            CARD_CATEGORIES_CONFIG[deliveryCategory].defaultCardsPerSheet}{' '}
-                          كرت)
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-slate-300 font-mono">
-                        {selectedSheetCodes.length === 0 ? (
-                          <span className="text-amber-400">
-                            لم يتم اختيار أي شيت بعد، انقر على أرقام الشيتات بالأعلى لتحديدها
+                  {/* Direct Numeric Input */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">
+                        عدد الكروت المطلوب توريدها للمنفذ:
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max={Math.max(1, totalAvailableCardsForDelivery)}
+                        required
+                        value={deliveryCustomCardsCount}
+                        onChange={(e) => setDeliveryCustomCardsCount(Math.max(1, Number(e.target.value)))}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-hidden focus:border-emerald-500 font-black font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">
+                        سعر الكرت بالجملة (ر.ي):
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        required
+                        value={deliveryCardUnitPrice}
+                        onChange={(e) => setDeliveryCardUnitPrice(Number(e.target.value))}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-emerald-400 focus:outline-hidden focus:border-emerald-500 font-bold font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Mathematical Decomposition and Breakdown Banner */}
+                  {(() => {
+                    const cardsPerSheet = CARD_CATEGORIES_CONFIG[deliveryCategory].defaultCardsPerSheet || 60;
+                    const fullSheets = Math.floor(deliveryCustomCardsCount / cardsPerSheet);
+                    const looseCards = deliveryCustomCardsCount % cardsPerSheet;
+                    const fullSheetsPrice = fullSheets * deliveryUnitPrice;
+                    const looseCardsPrice = looseCards * deliveryCardUnitPrice;
+                    const remainderInCustody = looseCards > 0 ? cardsPerSheet - looseCards : 0;
+
+                    return (
+                      <div className="p-3.5 rounded-xl bg-slate-900 border border-emerald-500/30 text-xs space-y-2">
+                        <div className="flex items-center justify-between font-bold">
+                          <span className="text-emerald-400 flex items-center gap-1.5">
+                            <CheckCircle className="w-4 h-4 text-emerald-400" />
+                            <span>تفصيل تركيبة الكمية الموردة:</span>
                           </span>
+                          <span className="text-white font-extrabold text-sm font-mono">
+                            {deliveryCustomCardsCount} كرت = {fullSheets > 0 ? `${fullSheets} شيت كامل ` : ''}
+                            {looseCards > 0 ? (fullSheets > 0 ? `+ ${looseCards} كرت مجزأ` : `${looseCards} كرت مجزأ من شيت`) : ''}
+                          </span>
+                        </div>
+
+                        <div className="text-[11px] text-slate-300 flex items-center justify-between bg-slate-950 p-2 rounded-lg border border-slate-800">
+                          <span>احتساب القيمة المالية الدقيقة:</span>
+                          <span className="font-mono text-emerald-300 font-bold">
+                            {fullSheets > 0 && `${fullSheets} شيت × ${deliveryUnitPrice.toLocaleString()} (${fullSheetsPrice.toLocaleString()} ر.ي) + `}
+                            {looseCards > 0 && `${looseCards} كرت × ${deliveryCardUnitPrice.toLocaleString()} (${looseCardsPrice.toLocaleString()} ر.ي) = `}
+                            <strong className="text-white text-xs">{computedDeliveryTotal.toLocaleString()} ر.ي</strong>
+                          </span>
+                        </div>
+
+                        {looseCards > 0 ? (
+                          <div className="text-[10px] text-amber-300 bg-amber-500/10 p-2 rounded-lg border border-amber-500/20 leading-relaxed font-bold">
+                            ✂️ آلية حركة المخزون: {fullSheets > 0 ? `سيتم تسليم ${fullSheets} شيت كامل، وقص شريحة ${looseCards} كرت من شيت آخر.` : `سيتم قص شريحة ${looseCards} كرت من شيت متاح بعهدتك.`} يتبقى في الشيت المفتوح بعهدتك <strong>{remainderInCustody} كرت</strong> جاهزة للتوزيع لاحقاً.
+                          </div>
                         ) : (
-                          sheets
-                            .filter((s) => selectedSheetCodes.includes(s.sheetCode))
-                            .map((s) => formatSheetWithBatch(s, undefined, batches))
-                            .join('، ')
+                          <div className="text-[10px] text-emerald-300 bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20 font-bold">
+                            📦 سيتم تسليم {fullSheets} شيت كامل مباشرة دون تجزئة.
+                          </div>
                         )}
                       </div>
-                    </div>
-                  </>
-                )}
-              </div>
+                    );
+                  })()}
+                </div>
+              ) : (
+                /* SHEET UNIT MODE: Batch Selector, Range, and Sheet Badges */
+                <div className="bg-slate-950 p-3.5 rounded-2xl border border-emerald-500/30 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <label className="text-xs font-extrabold text-emerald-400 flex items-center gap-1.5">
+                      <Layers className="w-4 h-4" />
+                      <span>خيار أرقام الشيتات الموزعة من الدفعة:</span>
+                    </label>
+                    <span className="text-[11px] font-bold text-emerald-300 bg-emerald-500/10 px-2.5 py-0.5 rounded-md border border-emerald-500/20">
+                      محدد: {selectedSheetCodes.length} شيت من {availableSheetsForDelivery.length} متاح
+                    </span>
+                  </div>
 
-              {/* 5. Sheets Count & Agreed Wholesale Unit Price */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">
-                    عدد الشيتات المعتمد:
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max={Math.max(1, availableSheetsForDelivery.length)}
-                    required
-                    value={deliverySheetsCount}
-                    onChange={(e) => handleSheetsCountInputChange(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-blue-500 font-bold"
-                  />
+                  {/* Batch Selector Dropdown */}
+                  {availableBatchesForCategory.length > 1 && (
+                    <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-xl border border-slate-800 text-xs">
+                      <span className="text-slate-400 shrink-0 font-bold">تحديد الدفعة:</span>
+                      <select
+                        value={selectedBatchId}
+                        onChange={(e) => {
+                          setSelectedBatchId(e.target.value);
+                          setSelectedSheetCodes([]);
+                          setDeliverySheetsCount(0);
+                        }}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-white focus:outline-hidden font-bold"
+                      >
+                        <option value="all">
+                          جميع الدفعات المتاحة ({availableBatchesForCategory.reduce((a, b) => a + b.count, 0)} شيت)
+                        </option>
+                        {availableBatchesForCategory.map((b) => (
+                          <option key={b.batchId} value={b.batchId}>
+                            {b.batchName} ({b.date}) — متوفر: {b.count} شيت
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {availableSheetsForDelivery.length === 0 ? (
+                    <div className="p-3 text-center rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-400 text-xs font-bold">
+                      ⚠️ لا توجد شيتات فئة {deliveryCategory} في عهدتك حالياً. يرجى طلب تحويل عهدة من المسؤول أولاً.
+                    </div>
+                  ) : (
+                    <>
+                      {/* Quick Selection Presets */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={selectAllAvailableSheets}
+                          className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-bold text-slate-300 hover:text-white transition cursor-pointer"
+                        >
+                          تحديد الكل ({availableSheetsForDelivery.length})
+                        </button>
+                        {[1, 2, 3, 5, 10].map(
+                          (num) =>
+                            availableSheetsForDelivery.length >= num && (
+                              <button
+                                key={num}
+                                type="button"
+                                onClick={() => {
+                                  const codes = availableSheetsForDelivery
+                                    .slice(0, num)
+                                    .map((s) => s.sheetCode);
+                                  setSelectedSheetCodes(codes);
+                                  setDeliverySheetsCount(codes.length);
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-bold text-slate-300 hover:text-white transition cursor-pointer"
+                              >
+                                {num} شيت
+                              </button>
+                            )
+                        )}
+                        <button
+                          type="button"
+                          onClick={clearSelectedSheets}
+                          className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-bold text-rose-400 hover:text-rose-300 transition cursor-pointer"
+                        >
+                          مسح التحديد
+                        </button>
+                      </div>
+
+                      {/* Sequential Range Selection (من شيت # إلى شيت #) */}
+                      <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 flex items-center gap-2 text-xs">
+                        <span className="text-slate-400 font-bold shrink-0">تحديد بالمدى:</span>
+                        <div className="flex items-center gap-1.5 flex-1">
+                          <span className="text-[10px] text-slate-500">من شيت #</span>
+                          <input
+                            type="number"
+                            placeholder="مثال: 1"
+                            value={rangeFrom}
+                            onChange={(e) => setRangeFrom(e.target.value === '' ? '' : Number(e.target.value))}
+                            className="w-16 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-center font-bold text-white text-xs font-mono"
+                          />
+                          <span className="text-[10px] text-slate-500">إلى #</span>
+                          <input
+                            type="number"
+                            placeholder="مثال: 5"
+                            value={rangeTo}
+                            onChange={(e) => setRangeTo(e.target.value === '' ? '' : Number(e.target.value))}
+                            className="w-16 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-center font-bold text-white text-xs font-mono"
+                          />
+                          <button
+                            type="button"
+                            onClick={applySequentialRange}
+                            className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition cursor-pointer"
+                          >
+                            تطبيق المدى
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Sheet Badges Clickable Grid */}
+                      <div className="max-h-40 overflow-y-auto p-2 rounded-xl bg-slate-900/90 border border-slate-800 flex flex-wrap gap-1.5">
+                        {availableSheetsForDelivery.map((sheet) => {
+                          const isSelected = selectedSheetCodes.includes(sheet.sheetCode);
+                          const batchInfo = batches.find((b) => b.id === sheet.batchId);
+
+                          const catBNum = sheet.categoryBatchNumber || (batchInfo ? getCategoryBatchNumber(batchInfo, batches) : 1);
+                          const ordinalBadge = ORDINAL_ARABIC[catBNum] || `د.${catBNum}`;
+
+                          return (
+                            <button
+                              type="button"
+                              key={sheet.sheetCode}
+                              onClick={() => toggleSheetCode(sheet.sheetCode)}
+                              title={`${formatSheetWithBatch(sheet, batchInfo, batches)} (${sheet.sheetCode})`}
+                              className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 transition cursor-pointer border ${
+                                isSelected
+                                  ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
+                                  : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                              }`}
+                            >
+                              {isSelected ? (
+                                <CheckCircle className="w-3.5 h-3.5 text-white" />
+                              ) : (
+                                <div className="w-3.5 h-3.5 rounded-full border border-slate-600" />
+                              )}
+                              <span>شيت #{sheet.leafNumber}</span>
+                              <span className="text-[10px] opacity-85 font-sans font-normal">
+                                ({ordinalBadge})
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Selected Numbers Summary Banner */}
+                      <div className="text-[11px] text-slate-300 bg-emerald-950/30 p-2.5 rounded-xl border border-emerald-500/20 flex flex-col gap-1">
+                        <div className="flex items-center justify-between font-bold">
+                          <span className="text-emerald-300 flex items-center gap-1">
+                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>أرقام الشيتات المختارة للتوريد:</span>
+                          </span>
+                          <span className="text-emerald-400 font-extrabold">
+                            {selectedSheetCodes.length} شيت (
+                            {selectedSheetCodes.length *
+                              CARD_CATEGORIES_CONFIG[deliveryCategory].defaultCardsPerSheet}{' '}
+                            كرت)
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-300 font-mono">
+                          {selectedSheetCodes.length === 0 ? (
+                            <span className="text-amber-400">
+                              لم يتم اختيار أي شيت بعد، انقر على أرقام الشيتات بالأعلى لتحديدها
+                            </span>
+                          ) : (
+                            sheets
+                              .filter((s) => selectedSheetCodes.includes(s.sheetCode))
+                              .map((s) => formatSheetWithBatch(s, undefined, batches))
+                              .join('، ')
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">
-                    سعر الشيت بالجملة:
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    required
-                    value={deliveryUnitPrice}
-                    onChange={(e) => setDeliveryUnitPrice(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-blue-500 font-bold text-emerald-400 font-mono"
-                  />
+              )}
+
+              {/* 5. Sheets Count & Agreed Wholesale Unit Price (only in sheet mode) */}
+              {deliveryUnitMode === 'sheets' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      عدد الشيتات المعتمد:
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max={Math.max(1, availableSheetsForDelivery.length)}
+                      required
+                      value={deliverySheetsCount}
+                      onChange={(e) => handleSheetsCountInputChange(Number(e.target.value))}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-blue-500 font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">
+                      سعر الشيت بالجملة:
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      required
+                      value={deliveryUnitPrice}
+                      onChange={(e) => setDeliveryUnitPrice(Number(e.target.value))}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-blue-500 font-bold text-emerald-400 font-mono"
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* 6. Total Calculation & Instant Cash Payment */}
               <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
                 <div className="flex justify-between items-center text-xs pb-2 border-b border-slate-850">
                   <span className="text-slate-400">إجمالي قيمة التوريد بالجملة:</span>
-                  <span className="font-extrabold text-white text-base">
-                    {(deliverySheetsCount * deliveryUnitPrice).toLocaleString()} ر.ي
+                  <span className="font-extrabold text-white text-base font-mono">
+                    {computedDeliveryTotal.toLocaleString()} ر.ي
                   </span>
                 </div>
 
@@ -1991,16 +2632,14 @@ export const OutletsView: React.FC = () => {
                     <div className="flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={() => setDeliveryCashPaid(deliverySheetsCount * deliveryUnitPrice)}
+                        onClick={() => setDeliveryCashPaid(computedDeliveryTotal)}
                         className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 text-[10px] font-bold transition cursor-pointer"
                       >
                         100% كاش
                       </button>
                       <button
                         type="button"
-                        onClick={() =>
-                          setDeliveryCashPaid(Math.round((deliverySheetsCount * deliveryUnitPrice) / 2))
-                        }
+                        onClick={() => setDeliveryCashPaid(Math.round(computedDeliveryTotal / 2))}
                         className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 hover:text-white text-[10px] font-bold transition cursor-pointer"
                       >
                         50% نصف
@@ -2018,7 +2657,7 @@ export const OutletsView: React.FC = () => {
                   <input
                     type="number"
                     min="0"
-                    max={deliverySheetsCount * deliveryUnitPrice}
+                    max={computedDeliveryTotal}
                     value={deliveryCashPaid}
                     onChange={(e) => setDeliveryCashPaid(Number(e.target.value))}
                     className="w-full bg-slate-900 border border-slate-750 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-emerald-500 font-bold text-emerald-300 font-mono text-lg"
@@ -2027,9 +2666,8 @@ export const OutletsView: React.FC = () => {
 
                 <div className="flex justify-between text-xs pt-1 text-rose-300 font-bold border-t border-slate-850">
                   <span>المبلغ المقيد كدين على المنفذ:</span>
-                  <span className="text-sm font-black">
-                    {Math.max(0, deliverySheetsCount * deliveryUnitPrice - deliveryCashPaid).toLocaleString()}{' '}
-                    ر.ي
+                  <span className="text-sm font-black font-mono">
+                    {Math.max(0, computedDeliveryTotal - deliveryCashPaid).toLocaleString()} ر.ي
                   </span>
                 </div>
 
@@ -2037,7 +2675,7 @@ export const OutletsView: React.FC = () => {
                 {(() => {
                   const targetOutlet = outlets.find((o) => o.id === deliveryTargetOutletId);
                   if (!targetOutlet) return null;
-                  const addedDebt = Math.max(0, deliverySheetsCount * deliveryUnitPrice - deliveryCashPaid);
+                  const addedDebt = Math.max(0, computedDeliveryTotal - deliveryCashPaid);
                   const newTotalDebt = targetOutlet.currentDebt + addedDebt;
                   const isExceeding =
                     targetOutlet.creditLimit > 0 && newTotalDebt > targetOutlet.creditLimit;
@@ -2091,10 +2729,38 @@ export const OutletsView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={availableSheetsForDelivery.length === 0 || selectedSheetCodes.length === 0}
+                  disabled={
+                    deliveryUnitMode === 'cards'
+                      ? totalAvailableCardsForDelivery === 0 ||
+                        deliveryCustomCardsCount <= 0 ||
+                        deliveryCustomCardsCount > totalAvailableCardsForDelivery
+                      : availableSheetsForDelivery.length === 0 ||
+                        Number(deliverySheetsCount) > availableSheetsForDelivery.length ||
+                        selectedSheetCodes.length === 0 ||
+                        selectedSheetCodes.length < Number(deliverySheetsCount)
+                  }
                   className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-xs shadow-lg shadow-blue-600/25 transition cursor-pointer"
+                  title={
+                    deliveryUnitMode === 'cards'
+                      ? totalAvailableCardsForDelivery === 0
+                        ? 'رصيد الكروت المتاح نفذ بالكامل (0 كرت) - التوريد معطل'
+                        : deliveryCustomCardsCount > totalAvailableCardsForDelivery
+                        ? 'الكمية المطلوبة تتجاوز رصيد الكروت المتاح'
+                        : 'إصدار سند توريد الكروت وتثبيت العملية'
+                      : availableSheetsForDelivery.length === 0
+                      ? 'رصيد المخزون المتاح للتوزيع نفذ بالكامل (0 شيت) - التوريد معطل'
+                      : Number(deliverySheetsCount) > availableSheetsForDelivery.length
+                      ? 'الكمية المطلوبة تتجاوز رصيد العهدة المتاح'
+                      : 'إصدار سند التوريد وتثبيت العملية'
+                  }
                 >
-                  إصدار سند التوريد وتثبيت العملية 🚀
+                  {deliveryUnitMode === 'cards'
+                    ? totalAvailableCardsForDelivery === 0
+                      ? '⛔ رصيد الكروت نافد'
+                      : `إصدار سند توريد (${deliveryCustomCardsCount} كرت) 🚀`
+                    : availableSheetsForDelivery.length === 0
+                    ? '⛔ الرصيد نفذ من المخزون'
+                    : 'إصدار سند التوريد وتثبيت العملية 🚀'}
                 </button>
               </div>
             </form>
@@ -2245,130 +2911,14 @@ export const OutletsView: React.FC = () => {
         </div>
       )}
 
-      {/* 4. Statement of Account Modal */}
-      {selectedOutletForStatement && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in">
-          <div className="w-full max-w-2xl max-h-[85vh] rounded-2xl bg-slate-900 border border-slate-700 p-6 text-slate-100 shadow-2xl relative text-right flex flex-col">
-            <button
-              onClick={() => setSelectedOutletForStatement(null)}
-              className="absolute left-4 top-4 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-800 shrink-0">
-              <div>
-                <h3 className="text-base font-extrabold text-white">
-                  كشف حساب: {selectedOutletForStatement.name}
-                </h3>
-                <p className="text-xs text-slate-400">
-                  المالك: {selectedOutletForStatement.ownerName} • هاتف: {selectedOutletForStatement.phone}
-                </p>
-              </div>
-              <div className="text-left">
-                <span className="text-[10px] text-slate-400 block">صافي الرصيد الحالي:</span>
-                <span className="text-base font-black text-rose-400">
-                  {selectedOutletForStatement.currentDebt.toLocaleString()} ر.ي
-                </span>
-              </div>
-            </div>
-
-            {/* Statement Transactions List */}
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-              {deliveries.filter((d) => d.outletId === selectedOutletForStatement.id).length === 0 &&
-              payments.filter((p) => p.outletId === selectedOutletForStatement.id).length === 0 ? (
-                <div className="p-8 text-center text-slate-400 text-xs">
-                  لا توجد حركات مسجلة لهذا المنفذ بعد (رصيد مصفّر 0 ر.ي).
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {/* Combine deliveries and payments sorted by date */}
-                  {[
-                    ...deliveries
-                      .filter((d) => d.outletId === selectedOutletForStatement.id)
-                      .map((d) => ({
-                        type: 'DEL',
-                        id: d.id,
-                        date: d.date,
-                        title: `توريد ${d.sheetsCount} شيت فئة ${d.category}`,
-                        amount: d.totalAmount,
-                        paid: d.cashPaidNow,
-                        debtAdded: d.remainingDebt,
-                        actor: d.deliveredBy,
-                      })),
-                    ...payments
-                      .filter((p) => p.outletId === selectedOutletForStatement.id)
-                      .map((p) => ({
-                        type: 'PAY',
-                        id: p.id,
-                        date: p.date,
-                        title: `سند قبض نقدية (${p.paymentMethod === 'cash' ? 'كاش' : 'حوالة'})`,
-                        amount: p.amount,
-                        paid: p.amount,
-                        debtAdded: -p.amount,
-                        actor: p.collectorName,
-                      })),
-                  ]
-                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                    .map((item) => (
-                      <div
-                        key={item.id}
-                        className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between text-xs"
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <div
-                            className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs ${
-                              item.type === 'DEL'
-                                ? 'bg-blue-500/20 text-blue-400'
-                                : 'bg-emerald-500/20 text-emerald-400'
-                            }`}
-                          >
-                            {item.type}
-                          </div>
-                          <div>
-                            <div className="font-bold text-white flex items-center gap-2">
-                              <span>{item.id}</span>
-                              <span className="text-slate-400 font-normal">{item.title}</span>
-                            </div>
-                            <span className="text-[10px] text-slate-500">
-                              {item.date} • بواسطة: {item.actor}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="text-left">
-                          <span
-                            className={`font-black ${
-                              item.type === 'DEL' ? 'text-rose-400' : 'text-emerald-400'
-                            }`}
-                          >
-                            {item.type === 'DEL'
-                              ? `+${item.amount.toLocaleString()}`
-                              : `-${item.amount.toLocaleString()}`}{' '}
-                            ر.ي
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              )}
-            </div>
-
-            <div className="pt-3 border-t border-slate-800 mt-3 shrink-0 flex items-center justify-between">
-              <span className="text-xs text-slate-400">
-                إجمالي التوريدات: {selectedOutletForStatement.totalDeliveredAmount.toLocaleString()} ر.ي •
-                المسدد: {selectedOutletForStatement.totalPaidAmount.toLocaleString()} ر.ي
-              </span>
-              <button
-                onClick={() => setSelectedOutletForStatement(null)}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white"
-              >
-                إغلاق
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 4. Rich Statement of Account Modal with WhatsApp & Print */}
+      <OutletStatementModal
+        outlet={selectedOutletForStatement}
+        isOpen={Boolean(selectedOutletForStatement)}
+        onClose={() => setSelectedOutletForStatement(null)}
+        deliveries={deliveries}
+        payments={payments}
+      />
 
       {/* 5. Modal: Voucher Print & Details (DEL or PAY) */}
       {selectedVoucherForPrint && (
@@ -2418,7 +2968,11 @@ export const OutletsView: React.FC = () => {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-slate-500">الكمية:</span>
-                        <span>{d.sheetsCount} شيت ({d.cardsCount} كرت)</span>
+                        <span className="font-bold">
+                          {d.deliveryUnit === 'cards'
+                            ? `${d.cardsCount} كرت (${Math.floor(d.cardsCount / (CARD_CATEGORIES_CONFIG[d.category]?.defaultCardsPerSheet || 60))} شيت ${d.cardsCount % (CARD_CATEGORIES_CONFIG[d.category]?.defaultCardsPerSheet || 60) > 0 ? `+ ${d.cardsCount % (CARD_CATEGORIES_CONFIG[d.category]?.defaultCardsPerSheet || 60)} كرت مجزأ` : 'كامل'})`
+                            : `${d.sheetsCount} شيت (${d.cardsCount} كرت)`}
+                        </span>
                       </div>
                       <div className="flex justify-between border-t border-slate-100 pt-1 text-[11px]">
                         <span className="text-slate-500">أرقام الشيتات من الدفعة:</span>
@@ -2519,6 +3073,484 @@ export const OutletsView: React.FC = () => {
               >
                 <Printer className="w-4 h-4" />
                 <span>طباعة إيصال السند 🖨️</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Modal: Edit Delivery Voucher */}
+      {isEditDeliveryOpen && editingDelivery && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-slate-700 p-6 text-slate-100 shadow-2xl relative text-right flex flex-col max-h-[90vh]">
+            <button
+              onClick={() => {
+                setIsEditDeliveryOpen(false);
+                setEditingDelivery(null);
+              }}
+              className="absolute left-4 top-4 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2 mb-4 shrink-0">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
+                <Edit3 className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-white">
+                  تعديل سند التوريد ({editingDelivery.id})
+                </h3>
+                <p className="text-xs text-slate-400">
+                  منفذ: {editingDelivery.outletName} • فئة {editingDelivery.category} ريال
+                </p>
+              </div>
+            </div>
+
+            {editDeliveryError && (
+              <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{editDeliveryError}</span>
+              </div>
+            )}
+
+            {editDeliverySuccess && (
+              <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
+                <Check className="w-4 h-4 shrink-0 text-emerald-400" />
+                <span>{editDeliverySuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleEditDeliverySubmit} className="space-y-4 overflow-y-auto pr-1 flex-1">
+              {/* Context Summary */}
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs space-y-1">
+                <div className="flex justify-between text-slate-400">
+                  <span>المبلغ السابق بالسند:</span>
+                  <span className="font-bold text-white">{editingDelivery.totalAmount.toLocaleString()} ر.ي</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>المدفوع كاش سابقاً:</span>
+                  <span className="font-bold text-emerald-400">{editingDelivery.cashPaidNow.toLocaleString()} ر.ي</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>الدين المقيد سابقاً:</span>
+                  <span className="font-bold text-rose-400">{editingDelivery.remainingDebt.toLocaleString()} ر.ي</span>
+                </div>
+              </div>
+
+              {/* Quantity */}
+              {editingDelivery.deliveryUnit === 'cards' || (editingDelivery.cardsCount && editingDelivery.cardsCount > 0 && !editingDelivery.sheetsCount) ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">عدد الكروت</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editDeliveryCards}
+                      onChange={(e) => setEditDeliveryCards(Math.max(1, parseInt(e.target.value || '1', 10)))}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white font-mono font-bold focus:outline-hidden focus:border-amber-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">سعر الكرت (ر.ي)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editDeliveryUnitPrice}
+                      onChange={(e) => setEditDeliveryUnitPrice(Math.max(0, parseFloat(e.target.value || '0')))}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white font-mono focus:outline-hidden focus:border-amber-500"
+                      required
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">عدد الشيتات</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editDeliverySheets}
+                      onChange={(e) => setEditDeliverySheets(Math.max(1, parseInt(e.target.value || '1', 10)))}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white font-mono font-bold focus:outline-hidden focus:border-amber-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">سعر الشيت (ر.ي)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editDeliveryUnitPrice}
+                      onChange={(e) => setEditDeliveryUnitPrice(Math.max(0, parseFloat(e.target.value || '0')))}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white font-mono focus:outline-hidden focus:border-amber-500"
+                      required
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Cash Paid */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">المبلغ المدفوع كاش نقداً (ر.ي)</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={editDeliveryCashPaid}
+                  onChange={(e) => setEditDeliveryCashPaid(Math.max(0, parseFloat(e.target.value || '0')))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-emerald-400 font-mono font-bold focus:outline-hidden focus:border-amber-500"
+                />
+              </div>
+
+              {/* Live Financial Calculation */}
+              {(() => {
+                const isCard = editingDelivery.deliveryUnit === 'cards' || (editingDelivery.cardsCount && editingDelivery.cardsCount > 0 && !editingDelivery.sheetsCount);
+                const config = CARD_CATEGORIES_CONFIG[editingDelivery.category];
+                let calcTotal = 0;
+                if (isCard) {
+                  const full = Math.floor(editDeliveryCards / config.defaultCardsPerSheet);
+                  const loose = editDeliveryCards % config.defaultCardsPerSheet;
+                  const sheetP = config.defaultWholesaleSheetPrice;
+                  calcTotal = full * sheetP + loose * editDeliveryUnitPrice;
+                } else {
+                  calcTotal = editDeliverySheets * editDeliveryUnitPrice;
+                }
+                const calcDebt = Math.max(0, calcTotal - editDeliveryCashPaid);
+                const diffDebt = calcDebt - editingDelivery.remainingDebt;
+
+                return (
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs space-y-1.5">
+                    <div className="flex justify-between font-bold">
+                      <span className="text-slate-300">إجمالي السند بعد التعديل:</span>
+                      <span className="text-white font-mono font-black">{calcTotal.toLocaleString()} ر.ي</span>
+                    </div>
+                    <div className="flex justify-between font-bold">
+                      <span className="text-slate-300">الدين الجديد على المنفذ:</span>
+                      <span className="text-rose-400 font-mono font-black">{calcDebt.toLocaleString()} ر.ي</span>
+                    </div>
+                    <div className="pt-1 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+                      <span>الفارق في دين المنفذ:</span>
+                      <span className={`font-mono font-bold ${diffDebt > 0 ? 'text-rose-400' : diffDebt < 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
+                        {diffDebt > 0 ? `+${diffDebt.toLocaleString()}` : diffDebt.toLocaleString()} ر.ي
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Date */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">تاريخ السند</label>
+                <input
+                  type="date"
+                  value={editDeliveryDate}
+                  onChange={(e) => setEditDeliveryDate(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500"
+                  required
+                />
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">ملاحظات التعديل</label>
+                <input
+                  type="text"
+                  value={editDeliveryNotes}
+                  onChange={(e) => setEditDeliveryNotes(e.target.value)}
+                  placeholder="ملاحظات توضيحية..."
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition cursor-pointer shadow-md"
+                >
+                  حفظ تعديل التوريد وتسوية الحساب
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditDeliveryOpen(false);
+                    setEditingDelivery(null);
+                  }}
+                  className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer transition"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Delete Delivery Voucher Confirmation */}
+      {deletingDelivery && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-rose-500/40 p-6 text-slate-100 shadow-2xl relative text-right">
+            <button
+              onClick={() => setDeletingDelivery(null)}
+              className="absolute left-4 top-4 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center font-bold mb-4 mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <h3 className="text-base font-extrabold text-white text-center mb-1">
+              تأكيد حذف وإلغاء سند التوريد
+            </h3>
+            <p className="text-xs text-slate-400 text-center mb-4 font-mono font-bold">
+              {deletingDelivery.id} • منفذ: {deletingDelivery.outletName}
+            </p>
+
+            {deleteDeliveryError && (
+              <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{deleteDeliveryError}</span>
+              </div>
+            )}
+
+            <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs leading-relaxed text-slate-300 mb-5 space-y-1.5">
+              <p>
+                عند تأكيد الحذف سيقوم النظام بالتسويات التالية تلقائياً:
+              </p>
+              <ul className="list-disc list-inside text-slate-400 space-y-1">
+                <li>خصم الدين المقيد (<strong className="text-rose-400">{deletingDelivery.remainingDebt.toLocaleString()} ر.ي</strong>) من حساب المنفذ.</li>
+                <li>خصم المبلغ المسدد (<strong className="text-emerald-400">{deletingDelivery.cashPaidNow.toLocaleString()} ر.ي</strong>) من إجمالي تحصيلات المنفذ.</li>
+                <li>إعادة الكروت الموردة (<strong className="text-amber-400">{deletingDelivery.cardsCount} كرت</strong>) إلى عهدة الموزع.</li>
+              </ul>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleDeleteDeliveryConfirm}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-xs transition cursor-pointer shadow-md"
+              >
+                تأكيد حذف السند وتسوية الحساب
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeletingDelivery(null)}
+                className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer transition"
+              >
+                تراجع
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Payment Voucher */}
+      {isEditPaymentOpen && editingPayment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-700 p-6 text-slate-100 shadow-2xl relative text-right flex flex-col max-h-[90vh]">
+            <button
+              onClick={() => {
+                setIsEditPaymentOpen(false);
+                setEditingPayment(null);
+              }}
+              className="absolute left-4 top-4 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2 mb-4 shrink-0">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
+                <Edit3 className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-white">
+                  تعديل سند القبض ({editingPayment.id})
+                </h3>
+                <p className="text-xs text-slate-400">
+                  منفذ: {editingPayment.outletName}
+                </p>
+              </div>
+            </div>
+
+            {editPaymentError && (
+              <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{editPaymentError}</span>
+              </div>
+            )}
+
+            {editPaymentSuccess && (
+              <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
+                <Check className="w-4 h-4 shrink-0 text-emerald-400" />
+                <span>{editPaymentSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleEditPaymentSubmit} className="space-y-4 overflow-y-auto pr-1 flex-1">
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs space-y-1">
+                <div className="flex justify-between text-slate-400">
+                  <span>المبلغ المسجل سابقاً:</span>
+                  <span className="font-extrabold text-emerald-400">{editingPayment.amount.toLocaleString()} ر.ي</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">المبلغ الجديد المقبوض (ر.ي)</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={editPaymentAmount}
+                  onChange={(e) => setEditPaymentAmount(Math.max(1, parseFloat(e.target.value || '1')))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-emerald-400 font-mono font-bold focus:outline-hidden focus:border-amber-500"
+                  required
+                />
+              </div>
+
+              {/* Live difference box */}
+              {(() => {
+                const diff = editPaymentAmount - editingPayment.amount;
+                return (
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+                    <span className="text-slate-400 block mb-1">الأثر على رصيد دين المنفذ:</span>
+                    <span className="font-bold text-white">
+                      {diff > 0
+                        ? `زيادة التحصيل بمقدار ${diff.toLocaleString()} ر.ي سيتم خصمها من دين المنفذ.`
+                        : diff < 0
+                        ? `تقليص التحصيل بمقدار ${Math.abs(diff).toLocaleString()} ر.ي سيتم إضافتها إلى دين المنفذ.`
+                        : 'المبلغ مطابق للسند الأصلي.'}
+                    </span>
+                  </div>
+                );
+              })()}
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">طريقة الدفع</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditPaymentMethod('cash')}
+                    className={`py-2 rounded-xl text-xs font-bold border transition ${
+                      editPaymentMethod === 'cash'
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-500'
+                        : 'bg-slate-800 text-slate-300 border-slate-700'
+                    }`}
+                  >
+                    نقداً (كاش)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditPaymentMethod('transfer')}
+                    className={`py-2 rounded-xl text-xs font-bold border transition ${
+                      editPaymentMethod === 'transfer'
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-500'
+                        : 'bg-slate-800 text-slate-300 border-slate-700'
+                    }`}
+                  >
+                    حوالة بنكية
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">تاريخ السند</label>
+                <input
+                  type="date"
+                  value={editPaymentDate}
+                  onChange={(e) => setEditPaymentDate(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">ملاحظات</label>
+                <input
+                  type="text"
+                  value={editPaymentNotes}
+                  onChange={(e) => setEditPaymentNotes(e.target.value)}
+                  placeholder="ملاحظات التعديل..."
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition cursor-pointer shadow-md"
+                >
+                  حفظ تعديل سند القبض
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditPaymentOpen(false);
+                    setEditingPayment(null);
+                  }}
+                  className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer transition"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Delete Payment Confirmation */}
+      {deletingPayment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-rose-500/40 p-6 text-slate-100 shadow-2xl relative text-right">
+            <button
+              onClick={() => setDeletingPayment(null)}
+              className="absolute left-4 top-4 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center font-bold mb-4 mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <h3 className="text-base font-extrabold text-white text-center mb-1">
+              تأكيد حذف سند القبض
+            </h3>
+            <p className="text-xs text-slate-400 text-center mb-4 font-mono font-bold">
+              {deletingPayment.id} • منفذ: {deletingPayment.outletName}
+            </p>
+
+            {deletePaymentError && (
+              <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{deletePaymentError}</span>
+              </div>
+            )}
+
+            <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs leading-relaxed text-slate-300 mb-5">
+              <p>
+                هل أنت متأكد من حذف هذا السند؟ سيتم فوراً إعادة قيد مبلغ (
+                <strong className="text-rose-400 font-bold">
+                  {deletingPayment.amount.toLocaleString()} ر.ي
+                </strong>
+                ) على حساب دين منفذ &quot;{deletingPayment.outletName}&quot; وخصمه من إجمالي مبالغ السداد.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleDeletePaymentConfirm}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-xs transition cursor-pointer shadow-md"
+              >
+                تأكيد حذف السند وإعادة الدين
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeletingPayment(null)}
+                className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer transition"
+              >
+                تراجع
               </button>
             </div>
           </div>

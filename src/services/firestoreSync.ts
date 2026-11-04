@@ -13,6 +13,8 @@ import {
   DamagedCardRecord,
   AuditLogItem,
   DistributorPermissions,
+  ExpenseItem,
+  MonthlyBudget,
 } from '../types';
 
 export interface CloudNetworkState {
@@ -27,6 +29,8 @@ export interface CloudNetworkState {
   settlements: SettlementRequest[];
   damagedCards: DamagedCardRecord[];
   auditLogs: AuditLogItem[];
+  expenses?: ExpenseItem[];
+  monthlyBudgets?: Record<string, MonthlyBudget>;
   permissions: DistributorPermissions;
   adminPin: string;
   distributorPin?: string;
@@ -69,6 +73,41 @@ export function sanitizeForFirestore<T>(data: T): T {
   );
 }
 
+export function cleanInvalidSheets(sheets: SheetLeaf[]): SheetLeaf[] {
+  if (!Array.isArray(sheets)) return [];
+  const seenCodes = new Set<string>();
+  return sheets.filter((s) => {
+    if (!s || !s.sheetCode) return false;
+    if (s.sheetCode === 'QZ-3000-TR7-C30') return false; // discard deleted transfer leftover
+    if (seenCodes.has(s.sheetCode)) return false;
+    seenCodes.add(s.sheetCode);
+    return true;
+  });
+}
+
+export function cleanInvalidBatches(batches: PrintBatch[]): PrintBatch[] {
+  if (!Array.isArray(batches)) return [];
+  const seenIds = new Set<string>();
+  return batches.filter((b) => {
+    if (!b || !b.id) return false;
+    if (seenIds.has(b.id)) return false;
+    seenIds.add(b.id);
+    return true;
+  });
+}
+
+export function cleanInvalidTransfers(transfers: CustodyTransfer[]): CustodyTransfer[] {
+  if (!Array.isArray(transfers)) return [];
+  const seenIds = new Set<string>();
+  return transfers.filter((t) => {
+    if (!t || !t.id) return false;
+    if (t.id === 'TR-2026-0007') return false; // explicitly deleted transfer
+    if (seenIds.has(t.id)) return false;
+    seenIds.add(t.id);
+    return true;
+  });
+}
+
 const STATE_DOC_REF = doc(db, 'system_data', 'network_state');
 const EVENT_DOC_REF = doc(db, 'system_data', 'latest_event');
 
@@ -96,6 +135,15 @@ export class FirestoreSyncService {
           this.isConnected = true;
           if (snapshot.exists()) {
             const data = snapshot.data() as CloudNetworkState;
+            if (Array.isArray(data.sheets)) {
+              data.sheets = cleanInvalidSheets(data.sheets);
+            }
+            if (Array.isArray(data.batches)) {
+              data.batches = cleanInvalidBatches(data.batches);
+            }
+            if (Array.isArray(data.transfers)) {
+              data.transfers = cleanInvalidTransfers(data.transfers);
+            }
             onRemoteUpdate(data);
           }
         },
@@ -185,7 +233,13 @@ export class FirestoreSyncService {
   // 4. Push local updates to the cloud for state mirroring
   async syncToCloud(state: Omit<CloudNetworkState, 'updatedAt'>, updatedByRole: string) {
     try {
-      const sanitized = sanitizeForFirestore(state);
+      const stateToSave = {
+        ...state,
+        sheets: cleanInvalidSheets(state.sheets),
+        batches: cleanInvalidBatches(state.batches),
+        transfers: cleanInvalidTransfers(state.transfers),
+      };
+      const sanitized = sanitizeForFirestore(stateToSave);
       await setDoc(
         STATE_DOC_REF,
         {
@@ -193,7 +247,7 @@ export class FirestoreSyncService {
           lastUpdatedBy: updatedByRole,
           updatedAt: serverTimestamp(),
         },
-        { merge: true }
+        { merge: false }
       );
       this.isConnected = true;
       return true;
@@ -209,7 +263,17 @@ export class FirestoreSyncService {
       const snap = await getDoc(STATE_DOC_REF);
       if (snap.exists()) {
         this.isConnected = true;
-        return snap.data() as CloudNetworkState;
+        const data = snap.data() as CloudNetworkState;
+        if (Array.isArray(data.sheets)) {
+          data.sheets = cleanInvalidSheets(data.sheets);
+        }
+        if (Array.isArray(data.batches)) {
+          data.batches = cleanInvalidBatches(data.batches);
+        }
+        if (Array.isArray(data.transfers)) {
+          data.transfers = cleanInvalidTransfers(data.transfers);
+        }
+        return data;
       }
       return null;
     } catch (err) {

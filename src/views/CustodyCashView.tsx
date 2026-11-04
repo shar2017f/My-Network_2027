@@ -17,10 +17,12 @@ import {
   Bell,
   Sliders,
   Volume2,
+  Edit2,
+  Trash2,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { CARD_CATEGORIES_CONFIG } from '../constants/cardConfig';
-import { CardCategory } from '../types';
+import { CardCategory, CashHandover } from '../types';
 
 export const CustodyCashView: React.FC = () => {
   const {
@@ -32,9 +34,12 @@ export const CustodyCashView: React.FC = () => {
     cashHandovers,
     damagedCards,
     distributorCashInHand,
+    distributorPaidExpensesAmount,
     adminTotalCashCollected,
     createCashHandover,
     resolveCashHandover,
+    updateCashHandover,
+    deleteCashHandover,
     recordDamage,
     criticalThresholds,
     setCriticalThreshold,
@@ -43,6 +48,10 @@ export const CustodyCashView: React.FC = () => {
   } = useApp();
 
   const [isHandoverModalOpen, setIsHandoverModalOpen] = useState(false);
+  const [editingHandover, setEditingHandover] = useState<CashHandover | null>(null);
+  const [editHandoverAmount, setEditHandoverAmount] = useState<number>(0);
+  const [editHandoverNotes, setEditHandoverNotes] = useState<string>('');
+  const [deletingHandover, setDeletingHandover] = useState<CashHandover | null>(null);
   const [isDamageModalOpen, setIsDamageModalOpen] = useState(false);
   const [isThresholdModalOpen, setIsThresholdModalOpen] = useState(false);
 
@@ -116,7 +125,7 @@ export const CustodyCashView: React.FC = () => {
               setHandoverAmount(distributorCashInHand);
               setIsHandoverModalOpen(true);
             }}
-            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-md shadow-emerald-500/20 transition cursor-pointer"
+            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2.5 min-h-[44px] rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-md shadow-emerald-500/20 transition cursor-pointer active:scale-95"
           >
             <Coins className="w-4 h-4" />
             <span>تسليم نقدية للمسؤول (CSH)</span>
@@ -124,7 +133,7 @@ export const CustodyCashView: React.FC = () => {
 
           <button
             onClick={() => setIsDamageModalOpen(true)}
-            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-rose-400 border border-slate-700 font-bold text-xs transition cursor-pointer"
+            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2.5 min-h-[44px] rounded-xl bg-slate-800 hover:bg-slate-700 text-rose-400 border border-slate-700 font-bold text-xs transition cursor-pointer active:scale-95"
           >
             <AlertTriangle className="w-4 h-4" />
             <span>تسجيل تالف / مرتجع</span>
@@ -143,7 +152,7 @@ export const CustodyCashView: React.FC = () => {
               </h3>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              معادلة دقيقة: نقدية التوريدات + تحصيل الديون + المبيعات المباشرة - المسلم للمسؤول
+              معادلة دقيقة: نقدية التوريدات + تحصيل الديون + المبيعات المباشرة - المسلم للمسؤول - المصروفات الميدانية المسددة من الكاش
             </p>
           </div>
 
@@ -157,8 +166,8 @@ export const CustodyCashView: React.FC = () => {
           </div>
         </div>
 
-        {/* 4 Formula Factors */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+        {/* 5 Formula Factors */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 text-xs">
           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
             <span className="text-slate-400 text-[10px] block">1. كاش التوريدات الفوري (+)</span>
             <span className="font-extrabold text-emerald-400 text-sm mt-0.5 block">
@@ -189,6 +198,14 @@ export const CustodyCashView: React.FC = () => {
               -{acceptedHandoverCash.toLocaleString()} ر.ي
             </span>
             <span className="text-[10px] text-slate-500">سندات CSH المعتمدة</span>
+          </div>
+
+          <div className="p-3 rounded-xl bg-slate-950 border border-amber-500/30 col-span-2 sm:col-span-1">
+            <span className="text-amber-400 text-[10px] block font-semibold">5. مصروفات الميدان (-)</span>
+            <span className="font-extrabold text-amber-400 text-sm mt-0.5 block">
+              -{distributorPaidExpensesAmount.toLocaleString()} ر.ي
+            </span>
+            <span className="text-[10px] text-slate-400">مسددة من العهدة النقدية</span>
           </div>
         </div>
       </div>
@@ -236,14 +253,22 @@ export const CustodyCashView: React.FC = () => {
               {Object.keys(CARD_CATEGORIES_CONFIG).map((catKey) => {
                 const cat = catKey as CardCategory;
                 const config = CARD_CATEGORIES_CONFIG[cat];
+                const perSheet = config.defaultCardsPerSheet || 60;
                 const catSheets = sheets.filter((s) => s.category === cat);
-                const adminSheets = catSheets.filter((s) => s.status === 'admin_custody').length;
-                const distSheets = catSheets.filter((s) => s.status === 'distributor_custody').length;
-                const deliveredSheets = catSheets.filter((s) => s.status === 'delivered_outlet').length;
-                const damagedSheets = catSheets.filter((s) => s.status === 'damaged').length;
+                const adminCards = catSheets.filter((s) => s.status === 'admin_custody').reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : perSheet), 0);
+                const distCards = catSheets.filter((s) => s.status === 'distributor_custody').reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : perSheet), 0);
+                const deliveredCards = catSheets.filter((s) => s.status === 'delivered_outlet').reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : perSheet), 0);
+                const damagedCards = catSheets.filter((s) => s.status === 'damaged').reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : perSheet), 0);
+
+                const adminSheets = Number((adminCards / perSheet).toFixed(2));
+                const distSheets = Number((distCards / perSheet).toFixed(2));
+                const deliveredSheets = Number((deliveredCards / perSheet).toFixed(2));
+                const damagedSheets = Number((damagedCards / perSheet).toFixed(2));
+                const totalCards = adminCards + distCards + deliveredCards + damagedCards;
+                const totalSheets = Number((totalCards / perSheet).toFixed(2));
                 const threshold = criticalThresholds[cat] ?? 2;
-                const isOutOfStock = distSheets === 0;
-                const isCritical = distSheets > 0 && distSheets <= threshold;
+                const isOutOfStock = distCards === 0;
+                const isCritical = distCards > 0 && distSheets <= threshold;
 
                 return (
                   <tr key={cat} className={`hover:bg-slate-850/40 transition ${isOutOfStock ? 'bg-rose-950/10' : isCritical ? 'bg-amber-950/10' : ''}`}>
@@ -258,7 +283,7 @@ export const CustodyCashView: React.FC = () => {
                     </td>
                     <td className="p-3 text-center">
                       <span className="px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-400 font-bold border border-blue-500/20">
-                        {adminSheets} شيت ({adminSheets * config.defaultCardsPerSheet} كرت)
+                        {adminCards} كرت {adminSheets > 0 ? `(${adminSheets} شيت)` : ''}
                       </span>
                     </td>
                     <td className="p-3 text-center">
@@ -270,7 +295,7 @@ export const CustodyCashView: React.FC = () => {
                             ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                             : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                         }`}>
-                          {distSheets} شيت ({distSheets * config.defaultCardsPerSheet} كرت)
+                          {distCards} كرت {distSheets > 0 ? `(${distSheets} شيت)` : ''}
                         </span>
 
                         {isOutOfStock ? (
@@ -289,13 +314,13 @@ export const CustodyCashView: React.FC = () => {
                       </div>
                     </td>
                     <td className="p-3 text-center text-slate-300">
-                      {deliveredSheets} شيت
+                      {deliveredCards} كرت {deliveredSheets > 0 ? `(${deliveredSheets} شيت)` : ''}
                     </td>
                     <td className="p-3 text-center text-rose-400 font-bold">
-                      {damagedSheets > 0 ? `${damagedSheets} شيت` : '0'}
+                      {damagedCards > 0 ? `${damagedCards} كرت` : '0'}
                     </td>
                     <td className="p-3 text-center font-black text-white">
-                      {catSheets.length} شيت
+                      {totalSheets} شيت ({totalCards} كرت)
                     </td>
                     {currentRole === 'admin' && (
                       <td className="p-3 text-center">
@@ -385,6 +410,30 @@ export const CustodyCashView: React.FC = () => {
                           title="رفض"
                         >
                           <XCircle className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Admin Edit / Delete Actions */}
+                    {currentRole === 'admin' && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            setEditingHandover(h);
+                            setEditHandoverAmount(h.amount);
+                            setEditHandoverNotes(h.notes || '');
+                          }}
+                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 transition cursor-pointer"
+                          title="تعديل سند تسليم النقدية"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setDeletingHandover(h)}
+                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition cursor-pointer"
+                          title="حذف/إلغاء سند التسليم"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     )}
@@ -486,14 +535,14 @@ export const CustodyCashView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsHandoverModalOpen(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs"
+                  className="flex-1 min-h-[44px] py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer active:scale-95 transition"
                 >
                   إلغاء
                 </button>
                 <button
                   type="submit"
                   disabled={handoverAmount <= 0}
-                  className="flex-1 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs shadow-md transition"
+                  className="flex-1 min-h-[44px] py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs shadow-md cursor-pointer active:scale-95 transition"
                 >
                   إرسال سند التسليم
                 </button>
@@ -678,6 +727,180 @@ export const CustodyCashView: React.FC = () => {
                 className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition cursor-pointer"
               >
                 إغلاق وحفظ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Cash Handover */}
+      {editingHandover && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-700 p-6 text-slate-100 shadow-2xl relative text-right">
+            <button
+              onClick={() => setEditingHandover(null)}
+              className="absolute left-4 top-4 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <h3 className="text-base font-extrabold text-white mb-2">تعديل سند تسليم النقدية</h3>
+            <p className="text-xs text-slate-400 mb-4">
+              رقم السند: <span className="font-mono text-amber-400 font-bold">{editingHandover.id}</span> • الحالة:{' '}
+              {editingHandover.status === 'accepted' ? 'معتمد ومستلم' : 'قيد الاعتماد'}
+            </p>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (editHandoverAmount <= 0) return;
+                updateCashHandover(editingHandover.id, {
+                  amount: Number(editHandoverAmount),
+                  notes: editHandoverNotes,
+                });
+                setEditingHandover(null);
+              }}
+              className="space-y-4 text-xs"
+            >
+              {/* Previous vs New Amount */}
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <div className="flex justify-between items-center text-slate-400">
+                  <span>المبلغ السابق المسجل:</span>
+                  <span className="font-mono font-bold text-slate-200">
+                    {editingHandover.amount.toLocaleString()} ر.ي
+                  </span>
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">المبلغ الجديد المسلم (ر.ي):</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={editHandoverAmount}
+                    onChange={(e) => setEditHandoverAmount(Number(e.target.value))}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-hidden focus:border-amber-500"
+                    required
+                  />
+                </div>
+
+                {/* Live Diff Calculation */}
+                {(() => {
+                  const diff = editHandoverAmount - editingHandover.amount;
+                  return (
+                    <div className="mt-2 pt-2 border-t border-slate-800 flex justify-between items-center">
+                      <span className="text-slate-400 font-medium">الأثر المالي المباشر:</span>
+                      <span
+                        className={`font-mono font-bold px-2 py-0.5 rounded text-[11px] ${
+                          diff === 0
+                            ? 'text-slate-400'
+                            : diff > 0
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                        }`}
+                      >
+                        {diff === 0
+                          ? 'لا يوجد تغيير مالي'
+                          : diff > 0
+                          ? `+${diff.toLocaleString()} ر.ي (زيادة الاستلام)`
+                          : `${diff.toLocaleString()} ر.ي (تخفيض الاستلام)`}
+                      </span>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-bold mb-1">ملاحظات التعديل والسبب:</label>
+                <input
+                  type="text"
+                  value={editHandoverNotes}
+                  onChange={(e) => setEditHandoverNotes(e.target.value)}
+                  placeholder="سبب تعديل سند التسليم..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-hidden focus:border-amber-500"
+                />
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-300 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  عند حفظ التعديل، سيقوم النظام تلقائياً بتحديث رصيد كاش عهدة الموزع وصندوق الإدارة
+                  فورياً وتوثيق التغيير في سجل التدقيق (Audit Log).
+                </span>
+              </div>
+
+              <div className="pt-2 border-t border-slate-800 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingHandover(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold transition cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold transition cursor-pointer"
+                >
+                  حفظ وتحديث الأرصدة
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Delete Cash Handover */}
+      {deletingHandover && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-sm rounded-2xl bg-slate-900 border border-rose-500/30 p-6 text-slate-100 shadow-2xl relative text-right">
+            <button
+              onClick={() => setDeletingHandover(null)}
+              className="absolute left-4 top-4 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-400 mb-3">
+              <Trash2 className="w-5 h-5" />
+            </div>
+
+            <h3 className="text-base font-extrabold text-white mb-1">تأكيد حذف سند تسليم النقدية</h3>
+            <p className="text-xs text-slate-400 mb-4">
+              هل أنت متأكد من حذف وإلغاء السند رقم{' '}
+              <span className="font-mono text-white font-bold">{deletingHandover.id}</span> بمبلغ{' '}
+              <span className="font-mono text-emerald-400 font-bold">
+                {deletingHandover.amount.toLocaleString()} ر.ي
+              </span>
+              ؟
+            </p>
+
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 space-y-1 mb-4">
+              <div className="font-bold flex items-center gap-1">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>الأثر المالي للحذف:</span>
+              </div>
+              <p className="text-[11px] leading-relaxed">
+                {deletingHandover.status === 'accepted'
+                  ? `سيتم إعادة مبلغ ${deletingHandover.amount.toLocaleString()} ر.ي فوراً إلى عهدة كاش الموزع وخصمها من صندوق الإدارة تلقائياً.`
+                  : 'السند لم يكن معتمداً بعد، سيتم حذفه دون تأثير على الأرصدة المعتمدة.'}
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeletingHandover(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition cursor-pointer"
+              >
+                تراجع
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  deleteCashHandover(deletingHandover.id);
+                  setDeletingHandover(null);
+                }}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition cursor-pointer"
+              >
+                تأكيد الحذف النهائي
               </button>
             </div>
           </div>

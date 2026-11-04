@@ -15,6 +15,8 @@ import {
   Bell,
   Volume2,
   ArrowRight,
+  Scale,
+  Receipt,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -59,20 +61,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
     criticalCategoriesCount,
     quickInitiatePrintBatch,
     triggerStockAlertManually,
+    totalExpensesAmount,
+    netProjectProfit,
   } = useApp();
 
   const isZeroState = batches.length === 0 && deliveries.length === 0;
 
-  // Chart 1 Data: Sheets / Cards by category
+  // Chart 1 Data: Sheets / Cards by category (properly calculating full sheets and fractional card splits)
   const categoriesData = Object.keys(CARD_CATEGORIES_CONFIG).map((cat) => {
     const config = CARD_CATEGORIES_CONFIG[cat as keyof typeof CARD_CATEGORIES_CONFIG];
     const catSheets = sheets.filter((s) => s.category === cat);
+    const perSheet = config.defaultCardsPerSheet || 60;
+
+    const totalCards = catSheets.reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : perSheet), 0);
+    const adminCards = catSheets.filter((s) => s.status === 'admin_custody').reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : perSheet), 0);
+    const distCards = catSheets.filter((s) => s.status === 'distributor_custody').reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : perSheet), 0);
+    const delCards = catSheets.filter((s) => s.status === 'delivered_outlet').reduce((sum, s) => sum + (s.cardsCount !== undefined ? s.cardsCount : perSheet), 0);
+
+    const totalCount = Number((totalCards / perSheet).toFixed(2));
+    const adminCount = Number((adminCards / perSheet).toFixed(2));
+    const distributorCount = Number((distCards / perSheet).toFixed(2));
+    const deliveredCount = Number((delCards / perSheet).toFixed(2));
+
     return {
       category: `${cat} ر.ي`,
-      adminCount: catSheets.filter((s) => s.status === 'admin_custody').length,
-      distributorCount: catSheets.filter((s) => s.status === 'distributor_custody').length,
-      deliveredCount: catSheets.filter((s) => s.status === 'delivered_outlet').length,
-      totalCount: catSheets.length,
+      adminCount,
+      distributorCount,
+      deliveredCount,
+      totalCount,
+      adminCards,
+      distCards,
+      delCards,
+      totalCards,
       color: config.color,
     };
   });
@@ -154,12 +174,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
           </div>
         </div>
 
-        {/* Quick Quick Actions */}
+        {/* Quick Actions */}
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => onNavigate('trial_balance')}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 text-xs font-bold border border-slate-700 hover:border-amber-500/50 transition cursor-pointer"
+            title="فتح ميزان المراجعة والمطابقة اللحظية للعهدة"
+          >
+            <Scale className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">ميزان المراجعة</span>
+          </button>
           {currentRole === 'admin' ? (
             <button
               onClick={() => onNavigate('batches')}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 text-xs font-bold border border-slate-700 transition cursor-pointer"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition cursor-pointer shadow-sm"
             >
               <PlusCircle className="w-3.5 h-3.5" />
               طباعة دفعة
@@ -167,7 +195,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
           ) : (
             <button
               onClick={() => onNavigate('outlets')}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-bold border border-slate-700 transition cursor-pointer"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition cursor-pointer shadow-sm"
             >
               <PlusCircle className="w-3.5 h-3.5" />
               توريد لمنفذ
@@ -337,7 +365,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             <span className="text-xs font-normal text-slate-400 mr-1">كرت</span>
           </div>
           <div className="text-[11px] text-slate-400 mt-1">
-            {sheets.filter((s) => s.status === 'admin_custody').length} شيت جاهز للتحويل
+            {Number((totalAdminCardsInCustody / 60).toFixed(1))} شيت جاهز للتحويل
           </div>
         </div>
 
@@ -352,7 +380,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             <span className="text-xs font-normal text-slate-400 mr-1">كرت</span>
           </div>
           <div className="text-[11px] text-slate-400 mt-1">
-            {sheets.filter((s) => s.status === 'distributor_custody').length} شيت في الميدان
+            {Number((totalDistributorCardsInCustody / 60).toFixed(1))} شيت في الميدان
           </div>
         </div>
 
@@ -399,6 +427,55 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
           <div className="text-[11px] text-emerald-300/80 mt-1">
             محصل وجاهز للتوريد
           </div>
+        </div>
+      </div>
+
+      {/* Financial P&L & Expenses Summary Banner */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/30 to-slate-900 border border-indigo-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-lg">
+        <div className="flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-2xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center shrink-0">
+            <Receipt className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="font-extrabold text-sm sm:text-base text-white">
+                الرقابة المحاسبية: المصروفات وصافي ربح المشروع
+              </h3>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                P&L معتمد
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">
+              ربط مباشر بين مبيعات الكروت، تكاليف الطباعة، ونفقات التشغيل والمشتريات
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+          {/* Expenses Mini-box */}
+          <div className="flex-1 sm:flex-initial bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl text-center sm:text-right">
+            <span className="text-[10px] text-slate-400 block font-medium">إجمالي المصروفات:</span>
+            <span className="text-sm sm:text-base font-black text-rose-400">
+              {totalExpensesAmount.toLocaleString()} <span className="text-[10px] font-normal text-slate-400">ر.ي</span>
+            </span>
+          </div>
+
+          {/* Net Profit Mini-box */}
+          <div className="flex-1 sm:flex-initial bg-slate-950/80 border border-emerald-500/30 px-3.5 py-2 rounded-xl text-center sm:text-right">
+            <span className="text-[10px] text-emerald-400 block font-medium">صافي ربح المشروع:</span>
+            <span className={`text-sm sm:text-base font-black ${netProjectProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {netProjectProfit >= 0 ? '+' : ''}{netProjectProfit.toLocaleString()} <span className="text-[10px] font-normal text-slate-400">ر.ي</span>
+            </span>
+          </div>
+
+          {/* Action Button */}
+          <button
+            onClick={() => onNavigate('expenses')}
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md transition cursor-pointer"
+          >
+            <span>سجل المصروفات والأرباح</span>
+            <ArrowRight className="w-3.5 h-3.5 rotate-180" />
+          </button>
         </div>
       </div>
 
@@ -532,10 +609,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
       {/* Quick Launchpad Buttons */}
       <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800">
         <h3 className="font-bold text-sm text-white mb-4">إجراءات سريعة ومحاسبية</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
           <button
             onClick={() => onNavigate('batches')}
-            className="p-3.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-right transition cursor-pointer hover:border-amber-500/50 group"
+            className="p-3.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-right transition cursor-pointer hover:border-amber-500/50 group min-h-[56px] active:scale-95"
           >
             <Layers className="w-5 h-5 text-amber-400 mb-2 group-hover:scale-110 transition-transform" />
             <div className="font-bold text-xs text-white">طباعة دفعة كروت</div>
@@ -544,7 +621,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
 
           <button
             onClick={() => onNavigate('transfers')}
-            className="p-3.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-right transition cursor-pointer hover:border-emerald-500/50 group"
+            className="p-3.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-right transition cursor-pointer hover:border-emerald-500/50 group min-h-[56px] active:scale-95"
           >
             <ArrowLeftRight className="w-5 h-5 text-emerald-400 mb-2 group-hover:scale-110 transition-transform" />
             <div className="font-bold text-xs text-white">تحويل عهدة (TR)</div>
@@ -552,8 +629,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
           </button>
 
           <button
+            onClick={() => onNavigate('trial_balance')}
+            className="p-3.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-right transition cursor-pointer hover:border-amber-400/50 group min-h-[56px] active:scale-95"
+          >
+            <Scale className="w-5 h-5 text-amber-400 mb-2 group-hover:scale-110 transition-transform" />
+            <div className="font-bold text-xs text-white">ميزان المراجعة</div>
+            <div className="text-[10px] text-slate-400 mt-0.5">مطابقة كميات العهدة</div>
+          </button>
+
+          <button
             onClick={() => onNavigate('outlets')}
-            className="p-3.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-right transition cursor-pointer hover:border-blue-500/50 group"
+            className="p-3.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-right transition cursor-pointer hover:border-blue-500/50 group min-h-[56px] active:scale-95"
           >
             <Store className="w-5 h-5 text-blue-400 mb-2 group-hover:scale-110 transition-transform" />
             <div className="font-bold text-xs text-white">توريد لمنفذ (DEL)</div>
@@ -562,7 +648,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
 
           <button
             onClick={() => onNavigate('outlets')}
-            className="p-3.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-right transition cursor-pointer hover:border-purple-500/50 group"
+            className="p-3.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-right transition cursor-pointer hover:border-purple-500/50 group min-h-[56px] active:scale-95"
           >
             <Coins className="w-5 h-5 text-purple-400 mb-2 group-hover:scale-110 transition-transform" />
             <div className="font-bold text-xs text-white">سند قبض (PAY)</div>
@@ -571,7 +657,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
 
           <button
             onClick={() => onNavigate('custody_cash')}
-            className="p-3.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-right transition cursor-pointer hover:border-rose-500/50 group"
+            className="p-3.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-right transition cursor-pointer hover:border-rose-500/50 group min-h-[56px] active:scale-95"
           >
             <TrendingUp className="w-5 h-5 text-rose-400 mb-2 group-hover:scale-110 transition-transform" />
             <div className="font-bold text-xs text-white">تسليم كاش للمدير (CSH)</div>

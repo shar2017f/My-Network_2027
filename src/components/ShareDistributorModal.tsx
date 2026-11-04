@@ -78,8 +78,8 @@ export const ShareDistributorModal: React.FC<ShareDistributorModalProps> = ({
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-    } catch {
-      window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      console.warn('Blocked opening external URL in sandboxed iframe preview:', e);
     }
   };
 

@@ -52,7 +52,7 @@ const FALLBACK_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#a855f7', '#06b6d4', 
 const ARABIC_DAYS = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 
 export const DistributorSalesChart: React.FC<DistributorSalesChartProps> = ({ onNavigate }) => {
-  const { deliveries, directSales, currentRole } = useApp();
+  const { deliveries, directSales, outlets, currentRole } = useApp();
 
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('daily');
   const [metric, setMetric] = useState<MetricType>('cards');
@@ -87,7 +87,10 @@ export const DistributorSalesChart: React.FC<DistributorSalesChartProps> = ({ on
     const demoDeliveries = [];
     const now = new Date();
     const categories: CardCategory[] = ['200', '500', '1000', '3000'];
-    const outletsList = ['منفذ أبو شعيب', 'بقالة البركة', 'مركز الأمل', 'بقالة النور'];
+    const outletsList =
+      outlets && outlets.length > 0
+        ? outlets.map((o) => o.name)
+        : ['منفذ أبو شعيب', 'منفذ أنا', 'مركز الأمل', 'بقالة النور'];
 
     for (let i = 13; i >= 0; i--) {
       const d = new Date(now);
