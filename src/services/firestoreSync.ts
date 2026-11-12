@@ -79,6 +79,7 @@ export function cleanInvalidSheets(sheets: SheetLeaf[]): SheetLeaf[] {
   return sheets.filter((s) => {
     if (!s || !s.sheetCode) return false;
     if (s.sheetCode === 'QZ-3000-TR7-C30') return false; // discard deleted transfer leftover
+    if (s.sheetCode === 'QZ-1000-B6-S004-P30-DEL-2026-0028') return false; // discard phantom 1000 delivery for DEL-28 (which belongs to 3000)
     if (seenCodes.has(s.sheetCode)) return false;
     seenCodes.add(s.sheetCode);
     return true;
@@ -233,6 +234,13 @@ export class FirestoreSyncService {
   // 4. Push local updates to the cloud for state mirroring
   async syncToCloud(state: Omit<CloudNetworkState, 'updatedAt'>, updatedByRole: string) {
     try {
+      // ZERO-WIPE SAFETY GUARD:
+      // Never allow an unhydrated or empty client to wipe existing production data in Firestore
+      if (!state.batches || state.batches.length === 0 || !state.sheets || state.sheets.length === 0) {
+        console.warn('[ZERO-WIPE GUARD] Aborted syncToCloud: incoming batches or sheets are empty. Protecting database from accidental reset.');
+        return false;
+      }
+
       const stateToSave = {
         ...state,
         sheets: cleanInvalidSheets(state.sheets),

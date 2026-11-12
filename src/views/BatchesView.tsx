@@ -140,8 +140,8 @@ export const BatchesView: React.FC = () => {
       category: cat,
       wholesaleSheetPrice: config.defaultWholesaleSheetPrice,
       cardsPerSheet: config.defaultCardsPerSheet,
-      batchPrintMode: config.allowCardUnits ? 'cards' : 'sheets',
-      cardsCount: config.allowCardUnits ? (prev.cardsCount || 20) : config.defaultCardsPerSheet,
+      batchPrintMode: 'sheets',
+      cardsCount: prev.cardsCount || config.defaultCardsPerSheet,
       wholesaleCardPrice: cardPrice,
     }));
   };
@@ -165,8 +165,8 @@ export const BatchesView: React.FC = () => {
       sheetsCount,
       cardsPerSheet: config.defaultCardsPerSheet,
       wholesaleSheetPrice: config.defaultWholesaleSheetPrice,
-      batchPrintMode: config.allowCardUnits ? 'cards' : 'sheets',
-      cardsCount: config.allowCardUnits ? 20 : sheetsCount * config.defaultCardsPerSheet,
+      batchPrintMode: 'sheets',
+      cardsCount: sheetsCount * config.defaultCardsPerSheet,
       wholesaleCardPrice: cardPrice,
       notes: `دفعة تعزيزية سريعة استجابة لتنبيه انخفاض رصيد فئة ${category}`,
     });
@@ -194,7 +194,7 @@ export const BatchesView: React.FC = () => {
       sheetsCount: isCardMode
         ? Number((formData.cardsCount / config.defaultCardsPerSheet).toFixed(2))
         : Number(formData.sheetsCount),
-      cardsPerSheet: isCardMode ? Number(formData.cardsCount) : Number(formData.cardsPerSheet),
+      cardsPerSheet: config.defaultCardsPerSheet,
       wholesaleSheetPrice: Number(formData.wholesaleSheetPrice),
       batchType: isCardMode ? 'cards' : 'sheets',
       cardsCount: isCardMode ? Number(formData.cardsCount) : undefined,

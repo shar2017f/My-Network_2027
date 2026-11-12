@@ -21,8 +21,12 @@ export const OutletPerformanceView: React.FC = () => {
 
   // Compute performance data for each outlet
   const performanceData = outlets.map((outlet) => {
-    const outletDeliveries = deliveries.filter((d) => d.outletId === outlet.id);
-    const outletPayments = payments.filter((p) => p.outletId === outlet.id);
+    const outletDeliveries = deliveries.filter(
+      (d) => d.outletId === outlet.id || d.outletName === outlet.name
+    );
+    const outletPayments = payments.filter(
+      (p) => p.outletId === outlet.id || p.outletName === outlet.name
+    );
 
     const totalDelivered = outlet.totalDeliveredAmount;
     const totalPaid = outlet.totalPaidAmount;

@@ -127,7 +127,7 @@ export const TransfersView: React.FC = () => {
         if (s.batchId === 'BATCH-2026-004' && leafNum > 10) return false;
         if (s.sheetCode?.startsWith('QZ-200-B4-S') && (leafNum > 10 || parseInt(s.sheetCode.replace('QZ-200-B4-S', ''), 10) > 10)) return false;
         const b = batches.find((x) => x.id === s.batchId);
-        if (b && typeof b.sheetsCount === 'number' && leafNum > b.sheetsCount) return false;
+        if (b && typeof b.sheetsCount === 'number' && leafNum > Math.ceil(b.sheetsCount)) return false;
         return true;
       }
     );
@@ -166,7 +166,7 @@ export const TransfersView: React.FC = () => {
         if (s.batchId === 'BATCH-2026-004' && leafNum > 10) return false;
         if (s.sheetCode?.startsWith('QZ-200-B4-S') && (leafNum > 10 || parseInt(s.sheetCode.replace('QZ-200-B4-S', ''), 10) > 10)) return false;
         const b = batches.find((x) => x.id === s.batchId);
-        if (b && typeof b.sheetsCount === 'number' && leafNum > b.sheetsCount) return false;
+        if (b && typeof b.sheetsCount === 'number' && leafNum > Math.ceil(b.sheetsCount)) return false;
         return selectedBatchId === 'all' || s.batchId === selectedBatchId;
       }
     );
@@ -889,7 +889,7 @@ export const TransfersView: React.FC = () => {
                             <div className="flex flex-col items-start">
                               <span>شيت #{sheet.leafNumber}</span>
                               <span className="text-[10px] text-slate-400 font-sans font-normal">
-                                ({ordinal})
+                                ({ordinal} - {sheet.cardsCount || CARD_CATEGORIES_CONFIG[selectedCategory].defaultCardsPerSheet} كرت)
                               </span>
                             </div>
                             <span className="text-[10px] text-slate-400 font-bold">

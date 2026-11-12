@@ -59,8 +59,12 @@ export const OutletStatementModal: React.FC<OutletStatementModalProps> = ({
       return { ledgerEntries: [], totalDebits: 0, totalCredits: 0, netBalance: 0 };
     }
 
-    const outletDeliveries = deliveries.filter((d) => d.outletId === outlet.id);
-    const outletPayments = payments.filter((p) => p.outletId === outlet.id);
+    const outletDeliveries = deliveries.filter(
+      (d) => d.outletId === outlet.id || d.outletName === outlet.name
+    );
+    const outletPayments = payments.filter(
+      (p) => p.outletId === outlet.id || p.outletName === outlet.name
+    );
 
     // Raw items
     const rawItems: Array<{
@@ -308,7 +312,7 @@ export const OutletStatementModal: React.FC<OutletStatementModalProps> = ({
               {totalDebits.toLocaleString()} <span className="text-xs font-normal text-slate-400">ر.ي</span>
             </div>
             <div className="text-[10px] text-slate-500 mt-0.5">
-              {deliveries.filter((d) => d.outletId === outlet.id).length} سندات توريد
+              {deliveries.filter((d) => d.outletId === outlet.id || d.outletName === outlet.name).length} سندات توريد
             </div>
           </div>
 

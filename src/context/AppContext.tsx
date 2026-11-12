@@ -25,12 +25,18 @@ import {
   ExpenseCategory,
   ExpensePaymentMethod,
   MonthlyBudget,
+  HydrationStatus,
+  DataConflictLog,
+  HydrationValidationReport,
+  OutletDebtAuditItem,
+  OutletDebtAuditReport,
 } from '../types';
 import {
   CARD_CATEGORIES_CONFIG,
   INITIAL_CLEAN_OUTLETS,
   DEFAULT_DISTRIBUTOR_PERMISSIONS,
   DEFAULT_CRITICAL_THRESHOLDS,
+  CANONICAL_DELIVERY_CASH,
 } from '../constants/cardConfig';
 import { soundService } from '../utils/sound';
 import { cloudSync, CloudNetworkState } from '../services/firestoreSync';
@@ -42,8 +48,9 @@ import {
   getArabicMonthName,
   getArabicMonthOnly,
 } from '../utils/batchNaming';
-import { safeStorage } from '../utils/safeStorage';
+import { safeStorage, getPersistentRole, setPersistentRole, clearPersistentRole } from '../utils/safeStorage';
 import { requestBackgroundSync, onServiceWorkerSync } from '../services/serviceWorkerRegistration';
+import { doesRecordMatchOutlet, calculateOutletFinancials } from '../utils/outletMatcher';
 
 export interface OfflineQueueItem {
   id: string;
@@ -59,9 +66,10 @@ interface AppContextType {
   navigateToTab: (tab: ActiveTab) => void;
   quickInitiatePrintBatch: (category: CardCategory, sheetsCount?: number) => void;
 
-  // Authentication & Role
+  // Authentication & Session Persistence
   currentRole: UserRole;
   setCurrentRole: (role: UserRole) => void;
+  logoutSession: () => void;
   adminPin: string;
   setAdminPin: (pin: string) => void;
   verifyAdminPin: (pin: string) => boolean;
@@ -93,6 +101,8 @@ interface AppContextType {
 
   // Cloud Real-Time Sync
   isCloudConnected: boolean;
+  hasLoadedInitialCloudState: boolean;
+  isHydratingCloud: boolean;
   syncNowToCloud: () => Promise<boolean>;
 
   // Financial & Inventory KPIs
@@ -263,6 +273,8 @@ interface AppContextType {
   addOutlet: (outlet: Omit<Outlet, 'id' | 'currentDebt' | 'totalDeliveredAmount' | 'totalPaidAmount' | 'createdAt'>) => Outlet;
   updateOutlet: (id: string, updates: Partial<Outlet>) => void;
   deleteOutlet: (id: string) => boolean;
+  checkOutletNameExists: (name: string, excludeId?: string) => Outlet | null;
+  mergeDuplicateOutletsByName: () => { success: boolean; mergedCount: number; message: string };
   createExpense: (data: {
     title: string;
     category: ExpenseCategory;
@@ -335,6 +347,18 @@ interface AppContextType {
   setUnsyncedDeliveryAlertMinutes: (minutes: number) => void;
   isUnsyncedAlertDismissed: boolean;
   dismissUnsyncedAlert: () => void;
+
+  // Hydration Validation & Data Conflict Protection
+  hydrationStatus: HydrationStatus;
+  isHydrated: boolean;
+  hydrationValidation: HydrationValidationReport;
+  conflictLogs: DataConflictLog[];
+  dismissConflictAlert: (id?: string) => void;
+  retryHydration: () => Promise<boolean>;
+
+  // Outlet Debt Audit & Dynamic Reconciliation
+  auditAndReconcileOutletDebts: (options?: { autoFix?: boolean }) => OutletDebtAuditReport;
+  lastDebtAuditReport: OutletDebtAuditReport | null;
 }
 
 const STORAGE_PREFIX = 'QAZAN_NET_V2_';
@@ -351,7 +375,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const quickInitiatePrintBatch = (category: CardCategory, sheetsCount?: number) => {
     if (currentRole !== 'admin') {
-      setCurrentRole('admin');
+      soundService.playAlert();
+      return;
     }
     setTargetPrintCategory(category);
     setActiveTab('batches');
@@ -389,30 +414,135 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!Array.isArray(list) || list.length === 0) {
       return INITIAL_CLEAN_OUTLETS;
     }
-    return list.map((item, idx) => {
-      const normalized = normalizeOutlet(item, idx);
-      if (normalized.id === 'OUT-002' && normalized.name === 'بقالة البركة') {
-        return {
+    const map = new Map<string, Outlet>();
+    for (const item of INITIAL_CLEAN_OUTLETS) {
+      map.set(item.id, { ...item });
+    }
+    for (let idx = 0; idx < list.length; idx++) {
+      const normalized = normalizeOutlet(list[idx], idx);
+      const existing = map.get(normalized.id);
+      if (existing) {
+        map.set(normalized.id, {
+          ...existing,
           ...normalized,
-          name: 'منفذ أنا',
-          ownerName: 'المشرف المباشر',
-          location: 'نقطة التوزيع المركزية',
-        };
+          name: normalized.name || existing.name,
+          ownerName: normalized.ownerName || existing.ownerName,
+          phone: normalized.phone || existing.phone,
+          location: normalized.location || existing.location,
+          creditLimit: typeof normalized.creditLimit === 'number' && normalized.creditLimit > 0 ? normalized.creditLimit : existing.creditLimit,
+          currentDebt: typeof normalized.currentDebt === 'number' ? normalized.currentDebt : existing.currentDebt,
+          totalDeliveredAmount: typeof normalized.totalDeliveredAmount === 'number' && normalized.totalDeliveredAmount > 0 ? normalized.totalDeliveredAmount : existing.totalDeliveredAmount,
+          totalPaidAmount: typeof normalized.totalPaidAmount === 'number' && normalized.totalPaidAmount > 0 ? normalized.totalPaidAmount : existing.totalPaidAmount,
+        });
+      } else {
+        map.set(normalized.id, normalized);
       }
-      return normalized;
-    });
+    }
+    return Array.from(map.values());
   };
 
   const sanitizeSheetsList = (list: SheetLeaf[]): SheetLeaf[] => {
     if (!Array.isArray(list)) return [];
     const seenCodes = new Set<string>();
-    return list.filter((s) => {
+    const filtered = list.filter((s) => {
       if (!s || !s.sheetCode) return false;
       if (s.sheetCode === 'QZ-3000-TR7-C30') return false; // discard deleted transfer leftover
+      if (s.sheetCode === 'QZ-1000-B11-C300' || s.sheetCode.includes('B11-C300') || s.sheetCode.includes('C300')) return false; // replaced by calibrated 5 sheets
+      if (s.sheetCode === 'QZ-1000-B6-S004-P30-DEL-2026-0028') return false; // discard phantom 1000 delivery for DEL-28 (belongs to 3000)
       if (seenCodes.has(s.sheetCode)) return false;
       seenCodes.add(s.sheetCode);
       return true;
+    }).map((s) => {
+      if (s.sheetCode === 'QZ-500-B2-S002' || s.sheetCode === 'QZ-500-B2-S003') {
+        const copy = { ...s, status: 'admin_custody' as const, currentHolder: 'admin' as const };
+        delete (copy as any).deliveryId;
+        return copy;
+      }
+      return s;
     });
+
+    // Ensure B11 calibrated sheets exist (Ashraf has sheets 1, 2, 3 and admin has sheets 4, 5)
+    const hasS1 = filtered.some((s) => s.sheetCode === 'QZ-1000-B11-S001');
+    if (!hasS1) {
+      const b11Sheets: SheetLeaf[] = [
+        {
+          sheetCode: 'QZ-1000-B11-S001',
+          leafNumber: 1,
+          batchNumber: 11,
+          categoryBatchNumber: 1,
+          monthBatchNumber: 1,
+          category: '1000',
+          batchId: 'BATCH-2026-011',
+          cardsCount: 60,
+          status: 'distributor_custody',
+          currentHolder: 'distributor',
+          transferId: 'TR-2026-0010',
+          accountingMonth: '2026-11',
+          timestamp: '2026-11-02T19:09:58.382Z',
+        },
+        {
+          sheetCode: 'QZ-1000-B11-S002',
+          leafNumber: 2,
+          batchNumber: 11,
+          categoryBatchNumber: 1,
+          monthBatchNumber: 1,
+          category: '1000',
+          batchId: 'BATCH-2026-011',
+          cardsCount: 60,
+          status: 'distributor_custody',
+          currentHolder: 'distributor',
+          transferId: 'TR-2026-0010',
+          accountingMonth: '2026-11',
+          timestamp: '2026-11-02T19:09:58.382Z',
+        },
+        {
+          sheetCode: 'QZ-1000-B11-S003',
+          leafNumber: 3,
+          batchNumber: 11,
+          categoryBatchNumber: 1,
+          monthBatchNumber: 1,
+          category: '1000',
+          batchId: 'BATCH-2026-011',
+          cardsCount: 60,
+          status: 'distributor_custody',
+          currentHolder: 'distributor',
+          transferId: 'TR-2026-0010',
+          accountingMonth: '2026-11',
+          timestamp: '2026-11-02T19:09:58.382Z',
+        },
+        {
+          sheetCode: 'QZ-1000-B11-S004',
+          leafNumber: 4,
+          batchNumber: 11,
+          categoryBatchNumber: 1,
+          monthBatchNumber: 1,
+          category: '1000',
+          batchId: 'BATCH-2026-011',
+          cardsCount: 60,
+          status: 'admin_custody',
+          currentHolder: 'admin',
+          accountingMonth: '2026-11',
+          timestamp: '2026-11-02T19:09:58.382Z',
+        },
+        {
+          sheetCode: 'QZ-1000-B11-S005',
+          leafNumber: 5,
+          batchNumber: 11,
+          categoryBatchNumber: 1,
+          monthBatchNumber: 1,
+          category: '1000',
+          batchId: 'BATCH-2026-011',
+          cardsCount: 60,
+          status: 'admin_custody',
+          currentHolder: 'admin',
+          accountingMonth: '2026-11',
+          timestamp: '2026-11-02T19:09:58.382Z',
+        },
+      ];
+      return [...filtered, ...b11Sheets];
+    }
+
+    return filtered;
   };
 
   const sanitizeBatchesList = (list: PrintBatch[]): PrintBatch[] => {
@@ -423,41 +553,155 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (seenIds.has(b.id)) return false;
       seenIds.add(b.id);
       return true;
+    }).map((b) => {
+      if (b.id === 'BATCH-2026-011' && (b.batchType === 'cards' || b.cardsPerSheet === 300)) {
+        return {
+          ...b,
+          sheetsCount: 5,
+          cardsPerSheet: 60,
+          totalCards: 300,
+          batchType: 'sheets',
+          wholesaleSheetPrice: b.wholesaleSheetPrice || 50000,
+          wholesaleCardPrice: 840,
+          totalWholesaleValue: 252000,
+        };
+      }
+      return b;
     });
   };
 
   const sanitizeTransfersList = (list: CustodyTransfer[]): CustodyTransfer[] => {
     if (!Array.isArray(list)) return [];
     const seenIds = new Set<string>();
-    return list.filter((t) => {
+    const mapped = list.filter((t) => {
       if (!t || !t.id) return false;
       if (t.id === 'TR-2026-0007') return false; // explicitly deleted transfer in audit log
       if (seenIds.has(t.id)) return false;
       seenIds.add(t.id);
       return true;
+    }).map((t) => {
+      if (t.id === 'TR-2026-0010' && (t.sheetsCount === 1 || t.sheetCodes?.includes('QZ-1000-B11-C300') || !t.sheetCodes?.includes('QZ-1000-B11-S001'))) {
+        return {
+          ...t,
+          sheetsCount: 3,
+          totalCards: 180,
+          totalWholesaleValue: 151200,
+          transferType: 'sheets' as const,
+          leafNumbers: [1, 2, 3],
+          sheetCodes: ['QZ-1000-B11-S001', 'QZ-1000-B11-S002', 'QZ-1000-B11-S003'],
+          notes: 'مع اشرف ٣ ورق ابو الف رقم ١و٢و٣ من أول دفعه نوفمبر معي انا ٤ و٥ ',
+        };
+      }
+      return t;
     });
+
+    // Ensure TR-2026-0006 exists (BATCH-2026-008: 14 sheets = 840 cards)
+    if (!mapped.some((t) => t.id === 'TR-2026-0006')) {
+      mapped.push({
+        id: 'TR-2026-0006',
+        transferNumber: 6,
+        batchId: 'BATCH-2026-008',
+        category: '500',
+        sheetsCount: 14,
+        totalCards: 840,
+        totalWholesaleValue: 352800,
+        date: '2026-10-22',
+        accountingMonth: '2026-10',
+        recipientName: 'الموزع الميداني',
+        fromUser: 'المسؤول',
+        toUser: 'الموزع الميداني',
+        status: 'received',
+        receivedAt: '2026-10-22T10:30:00.000Z',
+        createdAt: '2026-10-22T10:30:00.000Z',
+        transferType: 'sheets',
+        leafNumbers: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        sheetCodes: [
+          'QZ-500-B8-S002',
+          'QZ-500-B8-S003',
+          'QZ-500-B8-S004',
+          'QZ-500-B8-S005',
+          'QZ-500-B8-S006',
+          'QZ-500-B8-S007',
+          'QZ-500-B8-S008',
+          'QZ-500-B8-S009',
+          'QZ-500-B8-S010',
+          'QZ-500-B8-S011',
+          'QZ-500-B8-S012',
+          'QZ-500-B8-S013',
+          'QZ-500-B8-S014',
+          'QZ-500-B8-S015',
+        ],
+        notes: 'تحويل 14 شيت (840 كرت) من دفعة أكتوبر فئة 500 للموزع، وتبقي شيت واحد برقم 1 بمخزن المسؤول',
+      });
+    }
+
+    // Ensure TR-2026-0011 exists (BATCH-2026-009: 3 sheets = 180 cards)
+    if (!mapped.some((t) => t.id === 'TR-2026-0011')) {
+      mapped.push({
+        id: 'TR-2026-0011',
+        transferNumber: 11,
+        batchId: 'BATCH-2026-009',
+        category: '1000',
+        sheetsCount: 3,
+        totalCards: 180,
+        totalWholesaleValue: 151200,
+        date: '2026-10-22',
+        accountingMonth: '2026-10',
+        recipientName: 'الموزع الميداني',
+        fromUser: 'المسؤول',
+        toUser: 'الموزع الميداني',
+        status: 'received',
+        receivedAt: '2026-10-22T10:35:00.000Z',
+        createdAt: '2026-10-22T10:35:00.000Z',
+        transferType: 'sheets',
+        leafNumbers: [1, 2, 3],
+        sheetCodes: ['QZ-1000-B9-S001', 'QZ-1000-B9-S002', 'QZ-1000-B9-S003'],
+        notes: 'تحويل 3 شيتات (180 كرت) من دفعة أكتوبر فئة 1000 للموزع، وتبقي شيت واحد برقم 4 بمخزن المسؤول',
+      });
+    }
+
+    return mapped;
   };
 
-  // Load initial state or defaults safely
+  // Load initial state or defaults safely with persistent session lock
   const [currentRole, setCurrentRole] = useState<UserRole>(() => {
     try {
       if (typeof window !== 'undefined') {
         const urlParams = new URLSearchParams(window.location.search);
         const roleParam = urlParams.get('role');
         if (roleParam === 'distributor') {
-          safeStorage.setItem(STORAGE_PREFIX + 'role', 'distributor');
+          setPersistentRole('distributor');
           return 'distributor';
         }
         if (roleParam === 'admin') {
-          safeStorage.setItem(STORAGE_PREFIX + 'role', 'admin');
+          setPersistentRole('admin');
           return 'admin';
         }
       }
+      const saved = getPersistentRole();
+      if (saved) return saved;
       return (safeStorage.getItem(STORAGE_PREFIX + 'role') as UserRole) || 'admin';
     } catch {
       return 'admin';
     }
   });
+
+  const logoutSession = () => {
+    clearPersistentRole();
+    if (typeof window !== 'undefined' && window.history && window.history.replaceState) {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('role');
+        url.searchParams.delete('invite');
+        url.searchParams.delete('welcome');
+        url.searchParams.delete('token');
+        window.history.replaceState({}, document.title, url.pathname);
+      } catch {}
+    }
+    setCurrentRole('admin');
+    setActiveTab('dashboard');
+    soundService.playAlert();
+  };
 
   const [adminPin, setAdminPinState] = useState<string>(() => {
     try {
@@ -716,12 +960,142 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const auditLogsRef = React.useRef(auditLogs);
   auditLogsRef.current = auditLogs;
 
+  // Track Data Conflict Logs & Zero-Wipe Shield
+  const [conflictLogs, setConflictLogs] = useState<DataConflictLog[]>(() => {
+    return loadStored<DataConflictLog[]>('conflict_logs', []);
+  });
+  const conflictLogsRef = React.useRef(conflictLogs);
+  conflictLogsRef.current = conflictLogs;
+
+  // Track whether cloud state has been fetched at least once
+  const [hasLoadedInitialCloudState, setHasLoadedInitialCloudState] = useState<boolean>(() => {
+    try {
+      const cached = safeStorage.getItem(STORAGE_PREFIX + 'batches');
+      return !!(cached && JSON.parse(cached)?.length > 0);
+    } catch {
+      return false;
+    }
+  });
+  const hasLoadedInitialCloudStateRef = React.useRef(hasLoadedInitialCloudState);
+  hasLoadedInitialCloudStateRef.current = hasLoadedInitialCloudState;
+
+  const [hydrationStatus, setHydrationStatus] = useState<HydrationStatus>(() => {
+    try {
+      const cached = safeStorage.getItem(STORAGE_PREFIX + 'batches');
+      const parsed = cached ? JSON.parse(cached) : [];
+      return Array.isArray(parsed) && parsed.length > 0 ? 'ready' : 'validating';
+    } catch {
+      return 'validating';
+    }
+  });
+  const hydrationStatusRef = React.useRef<HydrationStatus>(hydrationStatus);
+  hydrationStatusRef.current = hydrationStatus;
+
+  const isHydrated = hydrationStatus === 'ready';
+
+  const [isHydratingCloud, setIsHydratingCloud] = useState<boolean>(!hasLoadedInitialCloudState);
+
+  const [hydrationValidation, setHydrationValidation] = useState<HydrationValidationReport>(() => {
+    try {
+      const cachedBatches = safeStorage.getItem(STORAGE_PREFIX + 'batches');
+      const bList = cachedBatches ? JSON.parse(cachedBatches) : [];
+      const hasData = Array.isArray(bList) && bList.length > 0;
+      return {
+        isValid: hasData,
+        status: hasData ? 'ready' : 'validating',
+        batchesCount: Array.isArray(bList) ? bList.length : 0,
+        sheetsCount: 0,
+        transfersCount: 0,
+        outletsCount: 0,
+        deliveriesCount: 0,
+        paymentsCount: 0,
+        errors: [],
+        warnings: [],
+        lastValidatedAt: hasData ? new Date().toISOString() : null,
+      };
+    } catch {
+      return {
+        isValid: false,
+        status: 'validating',
+        batchesCount: 0,
+        sheetsCount: 0,
+        transfersCount: 0,
+        outletsCount: 0,
+        deliveriesCount: 0,
+        paymentsCount: 0,
+        errors: [],
+        warnings: [],
+        lastValidatedAt: null,
+      };
+    }
+  });
+
+  const [lastDebtAuditReport, setLastDebtAuditReport] = useState<OutletDebtAuditReport | null>(null);
+
+  const recordConflict = (params: Omit<DataConflictLog, 'id' | 'timestamp'>) => {
+    const newLog: DataConflictLog = {
+      ...params,
+      id: `CFL-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toISOString(),
+    };
+    console.error('[QAZAN DATA CONFLICT DETECTED]', newLog);
+    setConflictLogs((prev) => {
+      const updated = [newLog, ...prev.slice(0, 49)];
+      try {
+        safeStorage.setItem(STORAGE_PREFIX + 'conflict_logs', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    addAudit(
+      'DATA_CONFLICT',
+      `[درع الحماية المحاسبية] ${newLog.message} (الإجراء المتخذ: ${
+        newLog.resolvedAction === 'PRESERVED_LOCAL' ? 'تثبيت السجلات المعتمدة ومنع التصفير' : 'دمج آمن'
+      })`
+    );
+
+    soundService.playUnsyncedWarning();
+  };
+
+  const dismissConflictAlert = (id?: string) => {
+    if (id) {
+      setConflictLogs((prev) => {
+        const updated = prev.filter((c) => c.id !== id);
+        try {
+          safeStorage.setItem(STORAGE_PREFIX + 'conflict_logs', JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+    } else {
+      setConflictLogs([]);
+      try {
+        safeStorage.removeItem(STORAGE_PREFIX + 'conflict_logs');
+      } catch {}
+    }
+  };
+
+  // Helper to ensure interfaces are blocked from modifications while unhydrated
+  const checkHydrationReady = (actionTitle: string): boolean => {
+    if (!hasLoadedInitialCloudStateRef.current || hydrationStatusRef.current !== 'ready') {
+      console.warn(`[VALIDATION LAYER] Action "${actionTitle}" blocked: hydration is not ready (${hydrationStatusRef.current}).`);
+      addAudit('HYDRATION_BLOCKED', `تم منع محاولة إجراء (${actionTitle}) أثناء مرحلة التحقق من السجلات لمنع تصفير الحسابات.`);
+      return false;
+    }
+    return true;
+  };
+
   // Helper to push state to Cloud
   const pushStateToCloud = async (override?: Partial<CloudNetworkState>) => {
+    // CRITICAL ZERO-WIPE PROTECTION: Never push to cloud before initial cloud state has hydrated and validated!
+    if (!hasLoadedInitialCloudStateRef.current || hydrationStatusRef.current !== 'ready') {
+      console.warn('[CloudSync] pushStateToCloud blocked: initial cloud state has not hydrated or is still validating (status: ' + hydrationStatusRef.current + ').');
+      return false;
+    }
+
     isLocalUpdateRef.current = true;
-    if (override?.batches) batchesRef.current = override.batches;
-    if (override?.sheets) sheetsRef.current = override.sheets;
-    if (override?.transfers) transfersRef.current = override.transfers;
+    if (override?.batches) batchesRef.current = sanitizeBatchesList(override.batches);
+    if (override?.sheets) sheetsRef.current = sanitizeSheetsList(override.sheets);
+    if (override?.transfers) transfersRef.current = sanitizeTransfersList(override.transfers);
     if (override?.outlets) outletsRef.current = override.outlets;
     if (override?.deliveries) deliveriesRef.current = override.deliveries;
     if (override?.payments) paymentsRef.current = override.payments;
@@ -732,6 +1106,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (override?.auditLogs) auditLogsRef.current = override.auditLogs;
     if (override?.expenses) expensesRef.current = override.expenses;
 
+    // Ensure local sheetsRef and transfersRef are always sanitized
+    sheetsRef.current = sanitizeSheetsList(sheetsRef.current);
+    transfersRef.current = sanitizeTransfersList(transfersRef.current);
+    batchesRef.current = sanitizeBatchesList(batchesRef.current);
+
     // Immediately update fingerprint so incoming self-echoes don't cause thrashing
     lastStateFingerprintRef.current = `${batchesRef.current.length}_${sheetsRef.current.length}_${transfersRef.current.length}_${outletsRef.current.length}_${deliveriesRef.current.length}_${paymentsRef.current.length}_${directSalesRef.current.length}_${cashHandoversRef.current.length}_${settlementsRef.current.length}_${damagedCardsRef.current.length}_${auditLogsRef.current.length}_${expensesRef.current.length}_${adminPin}`;
 
@@ -739,7 +1118,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const payload: Omit<CloudNetworkState, 'updatedAt'> = {
         batches: sanitizeBatchesList(override?.batches ?? batchesRef.current),
         sheets: sanitizeSheetsList(override?.sheets ?? sheetsRef.current),
-        transfers: override?.transfers ?? transfersRef.current,
+        transfers: sanitizeTransfersList(override?.transfers ?? transfersRef.current),
         outlets: override?.outlets ?? outletsRef.current,
         deliveries: override?.deliveries ?? deliveriesRef.current,
         payments: override?.payments ?? paymentsRef.current,
@@ -930,10 +1309,586 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, []);
 
+  // ==========================================
+  // HYDRATION VALIDATION LAYER & CONFLICT DETECTION
+  // ==========================================
+  const validateIncomingRemoteState = (
+    remoteState: CloudNetworkState,
+    source: 'snapshot' | 'direct_fetch'
+  ): { isValid: boolean; conflictDetected: boolean; errors: string[]; warnings: string[] } => {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    let conflictDetected = false;
+
+    if (!remoteState || typeof remoteState !== 'object') {
+      errors.push('الحالة السحابية الواردة غير صالحة أو فارغة.');
+      return { isValid: false, conflictDetected: true, errors, warnings };
+    }
+
+    const localBatchesCount = batchesRef.current?.length || 0;
+    const remoteBatchesCount = remoteState.batches?.length || 0;
+    const localSheetsCount = sheetsRef.current?.length || 0;
+    const remoteSheetsCount = remoteState.sheets?.length || 0;
+
+    // Critical Conflict Case 1: Local has populated batches, but remote state arrives completely empty
+    if (localBatchesCount > 0 && remoteBatchesCount === 0) {
+      conflictDetected = true;
+      errors.push(`محاولة تصفير غير مصرح بها: السحابة أرسلت 0 حزم بينما يمتلك النظام محلياً ${localBatchesCount} حزم.`);
+      recordConflict({
+        type: 'EMPTY_OVERWRITE_ATTEMPT',
+        severity: 'critical',
+        message: `تم منع تفريغ أو تصفير السجلات: السحابة أرسلت 0 حزم بينما يمتلك النظام ${localBatchesCount} حزم. تم تثبيت وحماية السجلات المعتمدة فوراً.`,
+        source: 'cloud_sync',
+        localSnapshot: {
+          batches: localBatchesCount,
+          sheets: localSheetsCount,
+          transfers: transfersRef.current?.length || 0,
+          outlets: outletsRef.current?.length || 0,
+          deliveries: deliveriesRef.current?.length || 0,
+          payments: paymentsRef.current?.length || 0,
+        },
+        incomingSnapshot: {
+          batches: remoteBatchesCount,
+          sheets: remoteSheetsCount,
+          transfers: remoteState.transfers?.length || 0,
+          outlets: remoteState.outlets?.length || 0,
+          deliveries: remoteState.deliveries?.length || 0,
+          payments: remoteState.payments?.length || 0,
+        },
+        resolvedAction: 'PRESERVED_LOCAL',
+      });
+      return { isValid: false, conflictDetected: true, errors, warnings };
+    }
+
+    // Critical Conflict Case 2: Sudden drastic count regression (e.g. going from 11 batches to 2 or 3)
+    if (localBatchesCount >= 5 && remoteBatchesCount > 0 && remoteBatchesCount < Math.floor(localBatchesCount / 2)) {
+      conflictDetected = true;
+      warnings.push(`انخفاض مفاجئ في عدد الحزم السحابية (${remoteBatchesCount} مقابل ${localBatchesCount} محلياً).`);
+      recordConflict({
+        type: 'COUNT_REGRESSION',
+        severity: 'warning',
+        message: `تم رصد نقص مفاجئ في الحزم السحابية (${remoteBatchesCount} مقابل ${localBatchesCount}). تم تفعيل الدمج التراكمي الشامل لمنع فقدان العمليات.`,
+        source: 'cloud_sync',
+        localSnapshot: {
+          batches: localBatchesCount,
+          sheets: localSheetsCount,
+          transfers: transfersRef.current?.length || 0,
+          outlets: outletsRef.current?.length || 0,
+          deliveries: deliveriesRef.current?.length || 0,
+          payments: paymentsRef.current?.length || 0,
+        },
+        incomingSnapshot: {
+          batches: remoteBatchesCount,
+          sheets: remoteSheetsCount,
+          transfers: remoteState.transfers?.length || 0,
+          outlets: remoteState.outlets?.length || 0,
+          deliveries: remoteState.deliveries?.length || 0,
+          payments: remoteState.payments?.length || 0,
+        },
+        resolvedAction: 'FORCE_MERGED',
+      });
+    }
+
+    // Verify arrays format
+    if (remoteState.batches && !Array.isArray(remoteState.batches)) errors.push('تنسيق حزم الطباعة غير صالح (ليس مصفوفة)');
+    if (remoteState.sheets && !Array.isArray(remoteState.sheets)) errors.push('تنسيق شيتات الكروت غير صالح (ليس مصفوفة)');
+    if (remoteState.transfers && !Array.isArray(remoteState.transfers)) errors.push('تنسيق سندات التحويل غير صالح (ليس مصفوفة)');
+    if (remoteState.outlets && !Array.isArray(remoteState.outlets)) errors.push('تنسيق بيانات المنافذ غير صالح (ليس مصفوفة)');
+
+    return {
+      isValid: errors.length === 0,
+      conflictDetected,
+      errors,
+      warnings,
+    };
+  };
+
+  const processAndApplyRemoteState = (
+    remoteState: CloudNetworkState,
+    source: 'snapshot' | 'direct_fetch'
+  ): boolean => {
+    if (!remoteState) return false;
+
+    // 1. Validation Layer Check
+    const validation = validateIncomingRemoteState(remoteState, source);
+
+    if (!validation.isValid && validation.conflictDetected) {
+      console.warn('[Validation Layer] Blocked remote state overwrite to protect accounts.');
+      setHydrationStatus('ready');
+      hydrationStatusRef.current = 'ready';
+      setHasLoadedInitialCloudState(true);
+      hasLoadedInitialCloudStateRef.current = true;
+      setIsHydratingCloud(false);
+      // Auto-heal cloud using verified local state
+      setTimeout(() => {
+        pushStateToCloud();
+      }, 300);
+      return false;
+    }
+
+    let shouldPushLocalToCloud = false;
+
+    // 1. Batches: smart union by ID
+    const remoteBatches = sanitizeBatchesList(remoteState.batches || []);
+    const localBatches = sanitizeBatchesList(batchesRef.current || []);
+    const mergedBatchesMap = new Map<string, PrintBatch>();
+    for (const b of remoteBatches) {
+      if (b && b.id) mergedBatchesMap.set(b.id, b);
+    }
+    for (const b of localBatches) {
+      if (b && b.id && !mergedBatchesMap.has(b.id)) {
+        mergedBatchesMap.set(b.id, b);
+        shouldPushLocalToCloud = true;
+      }
+    }
+    const mergedBatches = sanitizeBatchesList(Array.from(mergedBatchesMap.values()));
+    batchesRef.current = mergedBatches;
+    setBatches(mergedBatches);
+    try {
+      safeStorage.setItem(STORAGE_PREFIX + 'batches', JSON.stringify(mergedBatches));
+    } catch {}
+
+    // 2. Sheets: status progression priority (damaged > delivered_outlet > distributor_custody > admin_custody)
+    const remoteSheets = sanitizeSheetsList(remoteState.sheets || []);
+    const localSheets = sanitizeSheetsList(sheetsRef.current || []);
+    const mergedSheetsMap = new Map<string, SheetLeaf>();
+    const sheetStatusRank: Record<string, number> = {
+      damaged: 5,
+      delivered_outlet: 4,
+      distributor_custody: 3,
+      admin_custody: 2,
+      with_distributor: 3,
+      with_admin: 2,
+      in_print: 1,
+    };
+    for (const s of remoteSheets) {
+      if (s && s.sheetCode) {
+        const bNum = s.batchNumber || parseInt(s.sheetCode?.match(/B(\d+)/)?.[1] || '1', 10);
+        const leafNum = s.leafNumber || parseInt(s.sheetCode?.match(/S(\d+)/)?.[1] || '1', 10);
+        const bInfo = mergedBatches.find((b) => b.id === s.batchId);
+        const catBNum = s.categoryBatchNumber || (bInfo ? getCategoryBatchNumber(bInfo, mergedBatches) : bNum);
+        mergedSheetsMap.set(s.sheetCode, { ...s, batchNumber: bNum, leafNumber: leafNum, categoryBatchNumber: catBNum });
+      }
+    }
+    for (const localSheet of localSheets) {
+      if (localSheet && localSheet.sheetCode) {
+        const bInfo = mergedBatches.find((b) => b.id === localSheet.batchId);
+        const bNum = localSheet.batchNumber || parseInt(localSheet.sheetCode?.match(/B(\d+)/)?.[1] || '1', 10);
+        const leafNum = localSheet.leafNumber || parseInt(localSheet.sheetCode?.match(/S(\d+)/)?.[1] || '1', 10);
+        const catBNum = localSheet.categoryBatchNumber || (bInfo ? getCategoryBatchNumber(bInfo, mergedBatches) : bNum);
+        const normalizedLocal = { ...localSheet, batchNumber: bNum, leafNumber: leafNum, categoryBatchNumber: catBNum };
+        const remoteSheet = mergedSheetsMap.get(localSheet.sheetCode);
+        if (!remoteSheet) {
+          if (!bInfo || (typeof bInfo.sheetsCount === 'number' && leafNum <= bInfo.sheetsCount)) {
+            mergedSheetsMap.set(localSheet.sheetCode, normalizedLocal);
+            shouldPushLocalToCloud = true;
+          }
+        } else {
+          const localR = sheetStatusRank[localSheet.status] || 0;
+          const remoteR = sheetStatusRank[remoteSheet.status] || 0;
+          if (localR > remoteR || (localSheet.deliveryId && !remoteSheet.deliveryId)) {
+            mergedSheetsMap.set(localSheet.sheetCode, normalizedLocal);
+            shouldPushLocalToCloud = true;
+          }
+        }
+      }
+    }
+    const mergedSheets = sanitizeSheetsList(Array.from(mergedSheetsMap.values()));
+    sheetsRef.current = mergedSheets;
+    setSheets(mergedSheets);
+    try {
+      safeStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(mergedSheets));
+    } catch {}
+
+    // 3. Transfers (سندات التحويل TR): union by ID - never delete existing valid transfers!
+    const remoteTransfers = sanitizeTransfersList(remoteState.transfers || []);
+    const localTransfers = sanitizeTransfersList(transfersRef.current || []);
+    const mergedTransMap = new Map<string, CustodyTransfer>();
+    for (const t of remoteTransfers) {
+      if (t && t.id) mergedTransMap.set(t.id, t);
+    }
+    for (const t of localTransfers) {
+      if (t && t.id && !mergedTransMap.has(t.id)) {
+        mergedTransMap.set(t.id, t);
+        shouldPushLocalToCloud = true;
+      }
+    }
+    const mergedTransfers = sanitizeTransfersList(Array.from(mergedTransMap.values()));
+    transfersRef.current = mergedTransfers;
+    setTransfers(mergedTransfers);
+    try {
+      safeStorage.setItem(STORAGE_PREFIX + 'transfers', JSON.stringify(mergedTransfers));
+    } catch {}
+
+    // 4. Deliveries (سندات التوريد DEL): smart union by ID and canonical cash/debt protection
+    const remoteDeliveries = remoteState.deliveries || [];
+    const localDeliveries = deliveriesRef.current || [];
+    const mergedDelsMap = new Map<string, DeliveryVoucher>();
+    for (const d of remoteDeliveries) {
+      if (d && d.id) {
+        const canonicalCash = CANONICAL_DELIVERY_CASH[d.id];
+        const cashPaidNow = canonicalCash !== undefined ? canonicalCash : (Number(d.cashPaidNow) || 0);
+        const totalAmount = Number(d.totalAmount) || 0;
+        const remainingDebt = Math.max(0, totalAmount - cashPaidNow);
+        let paymentStatus = d.paymentStatus;
+        if (cashPaidNow >= totalAmount && totalAmount > 0) paymentStatus = 'paid_full';
+        else if (cashPaidNow > 0) paymentStatus = 'paid_partial';
+        else paymentStatus = 'credit';
+
+        mergedDelsMap.set(d.id, {
+          ...d,
+          totalAmount,
+          cashPaidNow,
+          remainingDebt,
+          paymentStatus,
+          syncedToCloud: true,
+        });
+      }
+    }
+    for (const d of localDeliveries) {
+      if (d && d.id) {
+        const canonicalCash = CANONICAL_DELIVERY_CASH[d.id];
+        const cashPaidNow = canonicalCash !== undefined ? canonicalCash : (Number(d.cashPaidNow) || 0);
+        const totalAmount = Number(d.totalAmount) || 0;
+        const remainingDebt = Math.max(0, totalAmount - cashPaidNow);
+        let paymentStatus = d.paymentStatus;
+        if (cashPaidNow >= totalAmount && totalAmount > 0) paymentStatus = 'paid_full';
+        else if (cashPaidNow > 0) paymentStatus = 'paid_partial';
+        else paymentStatus = 'credit';
+
+        if (!mergedDelsMap.has(d.id)) {
+          mergedDelsMap.set(d.id, {
+            ...d,
+            totalAmount,
+            cashPaidNow,
+            remainingDebt,
+            paymentStatus,
+            syncedToCloud: false,
+          });
+          shouldPushLocalToCloud = true;
+        }
+      }
+    }
+    const mergedDeliveries = Array.from(mergedDelsMap.values()).sort(
+      (a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime()
+    );
+    deliveriesRef.current = mergedDeliveries;
+    setDeliveries(mergedDeliveries);
+    try {
+      safeStorage.setItem(STORAGE_PREFIX + 'deliveries', JSON.stringify(mergedDeliveries));
+    } catch {}
+
+    // 5. Payments (سندات القبض والاستلام): smart union by ID
+    const remotePayments = remoteState.payments || [];
+    const localPayments = paymentsRef.current || [];
+    const mergedPaysMap = new Map<string, PaymentVoucher>();
+    for (const p of remotePayments) {
+      if (p && p.id) mergedPaysMap.set(p.id, { ...p, syncedToCloud: true });
+    }
+    for (const p of localPayments) {
+      if (p && p.id) {
+        if (!mergedPaysMap.has(p.id)) {
+          mergedPaysMap.set(p.id, { ...p, syncedToCloud: false });
+          shouldPushLocalToCloud = true;
+        }
+      }
+    }
+    const mergedPayments = Array.from(mergedPaysMap.values()).sort(
+      (a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime()
+    );
+    paymentsRef.current = mergedPayments;
+    setPayments(mergedPayments);
+    try {
+      safeStorage.setItem(STORAGE_PREFIX + 'payments', JSON.stringify(mergedPayments));
+    } catch {}
+
+    // 6. Outlets: Dynamic Cumulative Reconciliation directly from all vouchers
+    const remoteOutlets = sanitizeOutletsList(remoteState.outlets || []);
+    const localOutlets = sanitizeOutletsList(outletsRef.current || []);
+    const mergedOutletsMap = new Map<string, Outlet>();
+
+    // Seed with canonical network outlets catalog so standard outlets exist
+    for (const baseO of INITIAL_CLEAN_OUTLETS) {
+      mergedOutletsMap.set(baseO.id, { ...baseO });
+    }
+    for (const ro of remoteOutlets) {
+      if (ro && ro.id) {
+        const existing = mergedOutletsMap.get(ro.id);
+        mergedOutletsMap.set(ro.id, existing ? { ...existing, ...ro } : ro);
+      }
+    }
+    for (const lo of localOutlets) {
+      if (lo && lo.id && !mergedOutletsMap.has(lo.id)) {
+        mergedOutletsMap.set(lo.id, lo);
+      }
+    }
+
+    // Accurately aggregate cumulative balance for each outlet dynamically from all vouchers
+    const reconciledOutlets: Outlet[] = [];
+    for (const rawOutlet of mergedOutletsMap.values()) {
+      const fin = calculateOutletFinancials(rawOutlet, mergedDeliveries, mergedPayments);
+
+      const previousDebt = Number(rawOutlet.currentDebt) || 0;
+      const previousDelivered = Number(rawOutlet.totalDeliveredAmount) || 0;
+      const previousPaid = Number(rawOutlet.totalPaidAmount) || 0;
+
+      if (
+        previousDebt !== fin.currentDebt ||
+        previousDelivered !== fin.totalDeliveredAmount ||
+        previousPaid !== fin.totalPaidAmount
+      ) {
+        shouldPushLocalToCloud = true;
+      }
+
+      reconciledOutlets.push({
+        ...rawOutlet,
+        totalDeliveredAmount: fin.totalDeliveredAmount,
+        totalPaidAmount: fin.totalPaidAmount,
+        currentDebt: fin.currentDebt,
+      });
+    }
+
+    const mergedOutlets = sanitizeOutletsList(reconciledOutlets);
+    outletsRef.current = mergedOutlets;
+    setOutlets(mergedOutlets);
+    try {
+      safeStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(mergedOutlets));
+    } catch {}
+
+    // 7. Direct Sales: union by ID
+    const remoteDirectSales = remoteState.directSales || [];
+    const localDirectSales = directSalesRef.current || [];
+    const mergedSalesMap = new Map<string, DirectSale>();
+    for (const s of remoteDirectSales) {
+      if (s && s.id) mergedSalesMap.set(s.id, s);
+    }
+    for (const s of localDirectSales) {
+      if (s && s.id && !mergedSalesMap.has(s.id)) {
+        mergedSalesMap.set(s.id, s);
+        shouldPushLocalToCloud = true;
+      }
+    }
+    const mergedDirectSales = Array.from(mergedSalesMap.values()).sort(
+      (a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime()
+    );
+    directSalesRef.current = mergedDirectSales;
+    setDirectSales(mergedDirectSales);
+    try {
+      safeStorage.setItem(STORAGE_PREFIX + 'directSales', JSON.stringify(mergedDirectSales));
+    } catch {}
+
+    // 8. Cash Handovers: union by ID
+    const remoteHandovers = remoteState.cashHandovers || [];
+    const localHandovers = cashHandoversRef.current || [];
+    const mergedHandoversMap = new Map<string, CashHandover>();
+    for (const h of remoteHandovers) {
+      if (h && h.id) mergedHandoversMap.set(h.id, h);
+    }
+    for (const h of localHandovers) {
+      if (h && h.id && !mergedHandoversMap.has(h.id)) {
+        mergedHandoversMap.set(h.id, h);
+        shouldPushLocalToCloud = true;
+      }
+    }
+    const mergedCashHandovers = Array.from(mergedHandoversMap.values()).sort(
+      (a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime()
+    );
+    cashHandoversRef.current = mergedCashHandovers;
+    setCashHandovers(mergedCashHandovers);
+    try {
+      safeStorage.setItem(STORAGE_PREFIX + 'cashHandovers', JSON.stringify(mergedCashHandovers));
+    } catch {}
+
+    // 9. Settlements: union by ID
+    const remoteSettlements = remoteState.settlements || [];
+    const localSettlements = settlementsRef.current || [];
+    const mergedSetsMap = new Map<string, SettlementRequest>();
+    for (const s of remoteSettlements) {
+      if (s && s.id) mergedSetsMap.set(s.id, s);
+    }
+    for (const s of localSettlements) {
+      if (s && s.id && !mergedSetsMap.has(s.id)) {
+        mergedSetsMap.set(s.id, s);
+        shouldPushLocalToCloud = true;
+      }
+    }
+    const mergedSettlements = Array.from(mergedSetsMap.values()).sort(
+      (a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime()
+    );
+    settlementsRef.current = mergedSettlements;
+    setSettlements(mergedSettlements);
+    try {
+      safeStorage.setItem(STORAGE_PREFIX + 'settlements', JSON.stringify(mergedSettlements));
+    } catch {}
+
+    // 10. Damaged Cards: union by ID
+    const remoteDamaged = remoteState.damagedCards || [];
+    const localDamaged = damagedCardsRef.current || [];
+    const mergedDamagedMap = new Map<string, DamagedCardRecord>();
+    for (const d of remoteDamaged) {
+      if (d && d.id) mergedDamagedMap.set(d.id, d);
+    }
+    for (const d of localDamaged) {
+      if (d && d.id && !mergedDamagedMap.has(d.id)) {
+        mergedDamagedMap.set(d.id, d);
+        shouldPushLocalToCloud = true;
+      }
+    }
+    const mergedDamagedCards = Array.from(mergedDamagedMap.values()).sort(
+      (a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime()
+    );
+    damagedCardsRef.current = mergedDamagedCards;
+    setDamagedCards(mergedDamagedCards);
+    try {
+      safeStorage.setItem(STORAGE_PREFIX + 'damagedCards', JSON.stringify(mergedDamagedCards));
+    } catch {}
+
+    // 11. Audit Logs: union by ID
+    const remoteLogs = remoteState.auditLogs || [];
+    const localLogs = auditLogsRef.current || [];
+    const mergedLogsMap = new Map<string, AuditLogItem>();
+    for (const l of remoteLogs) {
+      if (l && l.id) mergedLogsMap.set(l.id, l);
+    }
+    for (const l of localLogs) {
+      if (l && l.id && !mergedLogsMap.has(l.id)) {
+        mergedLogsMap.set(l.id, l);
+        shouldPushLocalToCloud = true;
+      }
+    }
+    const mergedAuditLogs = Array.from(mergedLogsMap.values()).sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+    auditLogsRef.current = mergedAuditLogs;
+    setAuditLogs(mergedAuditLogs);
+    try {
+      safeStorage.setItem(STORAGE_PREFIX + 'auditLogs', JSON.stringify(mergedAuditLogs));
+    } catch {}
+
+    if (remoteState.expenses) {
+      const remoteExpenses = remoteState.expenses || [];
+      const localExpenses = expensesRef.current || [];
+      const mergedExpensesMap = new Map<string, ExpenseItem>();
+      for (const e of remoteExpenses) {
+        if (e && e.id) mergedExpensesMap.set(e.id, e);
+      }
+      for (const localE of localExpenses) {
+        if (localE && localE.id && !mergedExpensesMap.has(localE.id)) {
+          mergedExpensesMap.set(localE.id, localE);
+          shouldPushLocalToCloud = true;
+        }
+      }
+      const mergedExpenses = Array.from(mergedExpensesMap.values()).sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+      );
+      expensesRef.current = mergedExpenses;
+      setExpenses(mergedExpenses);
+      try {
+        safeStorage.setItem(STORAGE_PREFIX + 'expenses', JSON.stringify(mergedExpenses));
+      } catch {}
+    }
+
+    if (remoteState.permissions) {
+      setPermissions(remoteState.permissions);
+      try {
+        safeStorage.setItem(STORAGE_PREFIX + 'permissions', JSON.stringify(remoteState.permissions));
+      } catch {}
+    }
+
+    if (remoteState.adminPin) {
+      setAdminPinState(remoteState.adminPin);
+      try {
+        safeStorage.setItem(STORAGE_PREFIX + 'admin_pin', remoteState.adminPin);
+      } catch {}
+    }
+
+    if (remoteState.distributorPin) {
+      setDistributorPinState(remoteState.distributorPin);
+      try {
+        safeStorage.setItem(STORAGE_PREFIX + 'distributor_pin', remoteState.distributorPin);
+      } catch {}
+    }
+
+    if (remoteState.criticalThresholds) {
+      setCriticalThresholdsState(remoteState.criticalThresholds as Record<CardCategory, number>);
+    }
+
+    // Mark as Fully Hydrated & Validated
+    setHasLoadedInitialCloudState(true);
+    hasLoadedInitialCloudStateRef.current = true;
+    setIsHydratingCloud(false);
+    setHydrationStatus('ready');
+    hydrationStatusRef.current = 'ready';
+    setIsCloudConnected(true);
+
+    setHydrationValidation({
+      isValid: true,
+      status: 'ready',
+      batchesCount: mergedBatches.length,
+      sheetsCount: mergedSheets.length,
+      transfersCount: mergedTransfers.length,
+      outletsCount: mergedOutlets.length,
+      deliveriesCount: mergedDeliveries.length,
+      paymentsCount: mergedPayments.length,
+      errors: [],
+      warnings: validation.warnings,
+      lastValidatedAt: new Date().toISOString(),
+    });
+
+    // Populate live debt audit report
+    setTimeout(() => {
+      auditAndReconcileOutletDebts({ autoFix: false });
+    }, 50);
+
+    // If local had unsynced records that the cloud didn't have, immediately push them!
+    if (shouldPushLocalToCloud) {
+      setTimeout(() => {
+        pushStateToCloud();
+      }, 150);
+    }
+
+    return true;
+  };
+
+  const retryHydration = async (): Promise<boolean> => {
+    setHydrationStatus('hydrating');
+    hydrationStatusRef.current = 'hydrating';
+    setIsHydratingCloud(true);
+    try {
+      const state = await cloudSync.fetchCloudState();
+      if (state) {
+        return processAndApplyRemoteState(state, 'direct_fetch');
+      }
+      if (batchesRef.current.length > 0) {
+        setHydrationStatus('ready');
+        hydrationStatusRef.current = 'ready';
+        setIsHydratingCloud(false);
+        return true;
+      }
+      setHydrationStatus('ready');
+      hydrationStatusRef.current = 'ready';
+      setIsHydratingCloud(false);
+      return false;
+    } catch (err) {
+      console.error('Retry hydration failed:', err);
+      setHydrationStatus('error');
+      hydrationStatusRef.current = 'error';
+      setIsHydratingCloud(false);
+      return false;
+    }
+  };
+
   // Subscribe to real-time Cloud updates from other device
   useEffect(() => {
     testFirestoreConnection().then((ok) => {
       setIsCloudConnected(ok);
+    });
+
+    // 0. Fast fetch on mount to speed up initial hydration with full validation
+    cloudSync.fetchCloudState().then((state) => {
+      if (state) {
+        processAndApplyRemoteState(state, 'direct_fetch');
+      }
     });
 
     // 1. Full state synchronization listener
@@ -952,370 +1907,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Mark that incoming updates are remote so the debounced effect does NOT re-push them
       isRemoteSyncRef.current = true;
 
-      let shouldPushLocalToCloud = false;
-
-      // 1. Batches: smart union by ID
-      const remoteBatches = sanitizeBatchesList(remoteState.batches || []);
-      const localBatches = sanitizeBatchesList(batchesRef.current || []);
-      const mergedBatchesMap = new Map<string, PrintBatch>();
-      for (const b of remoteBatches) {
-        if (b && b.id) mergedBatchesMap.set(b.id, b);
-      }
-      for (const b of localBatches) {
-        if (b && b.id && !mergedBatchesMap.has(b.id)) {
-          mergedBatchesMap.set(b.id, b);
-          shouldPushLocalToCloud = true;
-        }
-      }
-      const mergedBatches = sanitizeBatchesList(Array.from(mergedBatchesMap.values()));
-      batchesRef.current = mergedBatches;
-      setBatches(mergedBatches);
-      try {
-        safeStorage.setItem(STORAGE_PREFIX + 'batches', JSON.stringify(mergedBatches));
-      } catch {}
-
-      // 2. Outlets: smart union & financial activity preservation
-      const remoteOutlets = sanitizeOutletsList(remoteState.outlets || []);
-      const localOutlets = sanitizeOutletsList(outletsRef.current || []);
-      const mergedOutletsMap = new Map<string, Outlet>();
-      for (const o of remoteOutlets) {
-        if (o && o.id) mergedOutletsMap.set(o.id, o);
-      }
-      for (const localO of localOutlets) {
-        if (localO && localO.id) {
-          const remoteO = mergedOutletsMap.get(localO.id);
-          if (!remoteO) {
-            mergedOutletsMap.set(localO.id, localO);
-            shouldPushLocalToCloud = true;
-          } else {
-            // Compare recorded financial activity
-            const localActivity = (localO.totalDeliveredAmount || 0) + (localO.totalPaidAmount || 0);
-            const remoteActivity = (remoteO.totalDeliveredAmount || 0) + (remoteO.totalPaidAmount || 0);
-            if (localActivity > remoteActivity) {
-              mergedOutletsMap.set(localO.id, {
-                ...remoteO,
-                ...localO,
-                currentDebt: localO.currentDebt,
-                totalDeliveredAmount: localO.totalDeliveredAmount,
-                totalPaidAmount: localO.totalPaidAmount,
-              });
-              shouldPushLocalToCloud = true;
-            } else {
-              // Preserve edited real names/phone/location if remote still had generic defaults
-              mergedOutletsMap.set(localO.id, {
-                ...remoteO,
-                name: localO.name && localO.name !== 'بقالة الوفاء' && remoteO.name === 'بقالة الوفاء' ? localO.name : remoteO.name,
-                phone: localO.phone || remoteO.phone,
-                location: localO.location || remoteO.location,
-                ownerName: localO.ownerName || remoteO.ownerName,
-              });
-            }
-          }
-        }
-      }
-      const mergedOutlets = sanitizeOutletsList(Array.from(mergedOutletsMap.values()));
-      outletsRef.current = mergedOutlets;
-      setOutlets(mergedOutlets);
-      try {
-        safeStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(mergedOutlets));
-      } catch {}
-
-      // 3. Sheets: status progression priority (damaged > delivered_outlet > distributor_custody > admin_custody)
-      const remoteSheets = sanitizeSheetsList(remoteState.sheets || []);
-      const localSheets = sanitizeSheetsList(sheetsRef.current || []);
-      const mergedSheetsMap = new Map<string, SheetLeaf>();
-      const sheetStatusRank: Record<string, number> = {
-        damaged: 5,
-        delivered_outlet: 4,
-        distributor_custody: 3,
-        admin_custody: 2,
-        with_distributor: 3,
-        with_admin: 2,
-        in_print: 1,
-      };
-      for (const s of remoteSheets) {
-        if (s && s.sheetCode) {
-          const bNum = s.batchNumber || parseInt(s.sheetCode?.match(/B(\d+)/)?.[1] || '1', 10);
-          const leafNum = s.leafNumber || parseInt(s.sheetCode?.match(/S(\d+)/)?.[1] || '1', 10);
-          const bInfo = mergedBatches.find((b) => b.id === s.batchId);
-          const catBNum = s.categoryBatchNumber || (bInfo ? getCategoryBatchNumber(bInfo, mergedBatches) : bNum);
-          mergedSheetsMap.set(s.sheetCode, { ...s, batchNumber: bNum, leafNumber: leafNum, categoryBatchNumber: catBNum });
-        }
-      }
-      for (const localSheet of localSheets) {
-        if (localSheet && localSheet.sheetCode) {
-          const bInfo = mergedBatches.find((b) => b.id === localSheet.batchId);
-          const bNum = localSheet.batchNumber || parseInt(localSheet.sheetCode?.match(/B(\d+)/)?.[1] || '1', 10);
-          const leafNum = localSheet.leafNumber || parseInt(localSheet.sheetCode?.match(/S(\d+)/)?.[1] || '1', 10);
-          const catBNum = localSheet.categoryBatchNumber || (bInfo ? getCategoryBatchNumber(bInfo, mergedBatches) : bNum);
-          const normalizedLocal = { ...localSheet, batchNumber: bNum, leafNumber: leafNum, categoryBatchNumber: catBNum };
-          const remoteSheet = mergedSheetsMap.get(localSheet.sheetCode);
-          if (!remoteSheet) {
-            if (!bInfo || (typeof bInfo.sheetsCount === 'number' && leafNum <= bInfo.sheetsCount)) {
-              mergedSheetsMap.set(localSheet.sheetCode, normalizedLocal);
-              shouldPushLocalToCloud = true;
-            }
-          } else {
-            const localR = sheetStatusRank[localSheet.status] || 0;
-            const remoteR = sheetStatusRank[remoteSheet.status] || 0;
-            if (localR > remoteR || (localSheet.deliveryId && !remoteSheet.deliveryId)) {
-              mergedSheetsMap.set(localSheet.sheetCode, normalizedLocal);
-              shouldPushLocalToCloud = true;
-            }
-          }
-        }
-      }
-      const mergedSheets = Array.from(mergedSheetsMap.values());
-      sheetsRef.current = mergedSheets;
-      setSheets(mergedSheets);
-      try {
-        safeStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(mergedSheets));
-      } catch {}
-
-      // 4. Transfers: union by ID, safely excluding deleted transfers
-      const deletedTransferIds = new Set<string>();
-      deletedTransferIds.add('TR-2026-0007');
-      const allAuditRecords = [...(remoteState.auditLogs || []), ...auditLogsRef.current];
-      for (const log of allAuditRecords) {
-        if (log.actionType === 'TRANSFER_DELETED') {
-          const match = log.details?.match(/TR-\d+-\d+/);
-          if (match) deletedTransferIds.add(match[0]);
-        }
-      }
-
-      const remoteTransfers = sanitizeTransfersList(remoteState.transfers || []).filter((t) => !deletedTransferIds.has(t.id));
-      const localTransfers = sanitizeTransfersList(transfersRef.current || []).filter((t) => !deletedTransferIds.has(t.id));
-      const mergedTransMap = new Map<string, CustodyTransfer>();
-      for (const t of remoteTransfers) {
-        if (t && t.id) mergedTransMap.set(t.id, t);
-      }
-      for (const t of localTransfers) {
-        if (t && t.id && !mergedTransMap.has(t.id)) {
-          mergedTransMap.set(t.id, t);
-          shouldPushLocalToCloud = true;
-        }
-      }
-      const mergedTransfers = sanitizeTransfersList(Array.from(mergedTransMap.values()));
-      transfersRef.current = mergedTransfers;
-      setTransfers(mergedTransfers);
-      try {
-        safeStorage.setItem(STORAGE_PREFIX + 'transfers', JSON.stringify(mergedTransfers));
-      } catch {}
-
-      // 5. Deliveries (سندات التوريد والتسليم): union by ID - never delete local deliveries!
-      const remoteDeliveries = remoteState.deliveries || [];
-      const localDeliveries = deliveriesRef.current || [];
-      const mergedDelsMap = new Map<string, DeliveryVoucher>();
-      for (const d of remoteDeliveries) {
-        if (d && d.id) mergedDelsMap.set(d.id, { ...d, syncedToCloud: true });
-      }
-      for (const d of localDeliveries) {
-        if (d && d.id) {
-          if (!mergedDelsMap.has(d.id)) {
-            mergedDelsMap.set(d.id, { ...d, syncedToCloud: false });
-            shouldPushLocalToCloud = true;
-          }
-        }
-      }
-      const mergedDeliveries = Array.from(mergedDelsMap.values()).sort(
-        (a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime()
-      );
-      deliveriesRef.current = mergedDeliveries;
-      setDeliveries(mergedDeliveries);
-      try {
-        safeStorage.setItem(STORAGE_PREFIX + 'deliveries', JSON.stringify(mergedDeliveries));
-      } catch {}
-
-      // 6. Payments (سندات القبض والاستلام): union by ID - never delete local payments!
-      const remotePayments = remoteState.payments || [];
-      const localPayments = paymentsRef.current || [];
-      const mergedPaysMap = new Map<string, PaymentVoucher>();
-      for (const p of remotePayments) {
-        if (p && p.id) mergedPaysMap.set(p.id, { ...p, syncedToCloud: true });
-      }
-      for (const p of localPayments) {
-        if (p && p.id) {
-          if (!mergedPaysMap.has(p.id)) {
-            mergedPaysMap.set(p.id, { ...p, syncedToCloud: false });
-            shouldPushLocalToCloud = true;
-          }
-        }
-      }
-      const mergedPayments = Array.from(mergedPaysMap.values()).sort(
-        (a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime()
-      );
-      paymentsRef.current = mergedPayments;
-      setPayments(mergedPayments);
-      try {
-        safeStorage.setItem(STORAGE_PREFIX + 'payments', JSON.stringify(mergedPayments));
-      } catch {}
-
-      // 7. Direct Sales: union by ID
-      const remoteDirectSales = remoteState.directSales || [];
-      const localDirectSales = directSalesRef.current || [];
-      const mergedSalesMap = new Map<string, DirectSale>();
-      for (const s of remoteDirectSales) {
-        if (s && s.id) mergedSalesMap.set(s.id, s);
-      }
-      for (const s of localDirectSales) {
-        if (s && s.id && !mergedSalesMap.has(s.id)) {
-          mergedSalesMap.set(s.id, s);
-          shouldPushLocalToCloud = true;
-        }
-      }
-      const mergedDirectSales = Array.from(mergedSalesMap.values()).sort(
-        (a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime()
-      );
-      directSalesRef.current = mergedDirectSales;
-      setDirectSales(mergedDirectSales);
-      try {
-        safeStorage.setItem(STORAGE_PREFIX + 'directSales', JSON.stringify(mergedDirectSales));
-      } catch {}
-
-      // 8. Cash Handovers: union by ID
-      const remoteHandovers = remoteState.cashHandovers || [];
-      const localHandovers = cashHandoversRef.current || [];
-      const mergedHandoversMap = new Map<string, CashHandover>();
-      for (const h of remoteHandovers) {
-        if (h && h.id) mergedHandoversMap.set(h.id, h);
-      }
-      for (const h of localHandovers) {
-        if (h && h.id && !mergedHandoversMap.has(h.id)) {
-          mergedHandoversMap.set(h.id, h);
-          shouldPushLocalToCloud = true;
-        }
-      }
-      const mergedCashHandovers = Array.from(mergedHandoversMap.values()).sort(
-        (a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime()
-      );
-      cashHandoversRef.current = mergedCashHandovers;
-      setCashHandovers(mergedCashHandovers);
-      try {
-        safeStorage.setItem(STORAGE_PREFIX + 'cashHandovers', JSON.stringify(mergedCashHandovers));
-      } catch {}
-
-      // 9. Settlements: union by ID
-      const remoteSettlements = remoteState.settlements || [];
-      const localSettlements = settlementsRef.current || [];
-      const mergedSettlementsMap = new Map<string, SettlementRequest>();
-      for (const s of remoteSettlements) {
-        if (s && s.id) mergedSettlementsMap.set(s.id, s);
-      }
-      for (const s of localSettlements) {
-        if (s && s.id && !mergedSettlementsMap.has(s.id)) {
-          mergedSettlementsMap.set(s.id, s);
-          shouldPushLocalToCloud = true;
-        }
-      }
-      const mergedSettlements = Array.from(mergedSettlementsMap.values()).sort(
-        (a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime()
-      );
-      settlementsRef.current = mergedSettlements;
-      setSettlements(mergedSettlements);
-      try {
-        safeStorage.setItem(STORAGE_PREFIX + 'settlements', JSON.stringify(mergedSettlements));
-      } catch {}
-
-      // 10. Damaged Cards: union by ID
-      const remoteDamages = remoteState.damagedCards || [];
-      const localDamages = damagedCardsRef.current || [];
-      const mergedDamagesMap = new Map<string, DamagedCardRecord>();
-      for (const d of remoteDamages) {
-        if (d && d.id) mergedDamagesMap.set(d.id, d);
-      }
-      for (const d of localDamages) {
-        if (d && d.id && !mergedDamagesMap.has(d.id)) {
-          mergedDamagesMap.set(d.id, d);
-          shouldPushLocalToCloud = true;
-        }
-      }
-      const mergedDamagedCards = Array.from(mergedDamagesMap.values()).sort(
-        (a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime()
-      );
-      damagedCardsRef.current = mergedDamagedCards;
-      setDamagedCards(mergedDamagedCards);
-      try {
-        safeStorage.setItem(STORAGE_PREFIX + 'damagedCards', JSON.stringify(mergedDamagedCards));
-      } catch {}
-
-      // 11. Audit Logs: union by ID
-      const remoteLogs = remoteState.auditLogs || [];
-      const localLogs = auditLogsRef.current || [];
-      const mergedLogsMap = new Map<string, AuditLogItem>();
-      for (const l of remoteLogs) {
-        if (l && l.id) mergedLogsMap.set(l.id, l);
-      }
-      for (const l of localLogs) {
-        if (l && l.id && !mergedLogsMap.has(l.id)) {
-          mergedLogsMap.set(l.id, l);
-          shouldPushLocalToCloud = true;
-        }
-      }
-      const mergedAuditLogs = Array.from(mergedLogsMap.values()).sort(
-        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      );
-      auditLogsRef.current = mergedAuditLogs;
-      setAuditLogs(mergedAuditLogs);
-      try {
-        safeStorage.setItem(STORAGE_PREFIX + 'auditLogs', JSON.stringify(mergedAuditLogs));
-      } catch {}
-
-      if (remoteState.expenses) {
-        const remoteExpenses = remoteState.expenses || [];
-        const localExpenses = expensesRef.current || [];
-        const mergedExpensesMap = new Map<string, ExpenseItem>();
-        for (const e of remoteExpenses) {
-          if (e && e.id) mergedExpensesMap.set(e.id, e);
-        }
-        for (const localE of localExpenses) {
-          if (localE && localE.id && !mergedExpensesMap.has(localE.id)) {
-            mergedExpensesMap.set(localE.id, localE);
-            shouldPushLocalToCloud = true;
-          }
-        }
-        const mergedExpenses = Array.from(mergedExpensesMap.values()).sort(
-          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-        );
-        expensesRef.current = mergedExpenses;
-        setExpenses(mergedExpenses);
-        try {
-          safeStorage.setItem(STORAGE_PREFIX + 'expenses', JSON.stringify(mergedExpenses));
-        } catch {}
-      }
-
-      if (remoteState.permissions) {
-        setPermissions(remoteState.permissions);
-        try {
-          safeStorage.setItem(STORAGE_PREFIX + 'permissions', JSON.stringify(remoteState.permissions));
-        } catch {}
-      }
-
-      if (remoteState.adminPin) {
-        setAdminPinState(remoteState.adminPin);
-        try {
-          safeStorage.setItem(STORAGE_PREFIX + 'admin_pin', remoteState.adminPin);
-        } catch {}
-      }
-
-      if (remoteState.distributorPin) {
-        setDistributorPinState(remoteState.distributorPin);
-        try {
-          safeStorage.setItem(STORAGE_PREFIX + 'distributor_pin', remoteState.distributorPin);
-        } catch {}
-      }
-
-      if (remoteState.criticalThresholds) {
-        setCriticalThresholdsState(remoteState.criticalThresholds as Record<CardCategory, number>);
-      }
-
-      setIsCloudConnected(true);
-
-      // If local had unsynced records that the cloud didn't have, immediately push them!
-      if (shouldPushLocalToCloud) {
-        setTimeout(() => {
-          pushStateToCloud();
-        }, 150);
-      }
+      processAndApplyRemoteState(remoteState, 'snapshot');
     });
 
     // 2. Background real-time snapshot events listener for instant audio & visual alerts
@@ -1404,9 +1996,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     safeStorage.setItem(STORAGE_PREFIX + 'expenses', JSON.stringify(expenses));
   }, [expenses]);
 
-  // Save to localStorage whenever state changes
+  // Save to persistent storage whenever state changes
   useEffect(() => {
-    safeStorage.setItem(STORAGE_PREFIX + 'role', currentRole);
+    setPersistentRole(currentRole);
   }, [currentRole]);
 
   useEffect(() => {
@@ -1818,6 +2410,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const setAdminPin = (newPin: string) => {
+    if (!checkHydrationReady('تغيير الرمز السري للمسؤول')) return;
     setAdminPinState(newPin);
     safeStorage.setItem(STORAGE_PREFIX + 'admin_pin', newPin);
     pushStateToCloud({ adminPin: newPin });
@@ -1830,6 +2423,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const setDistributorPin = (newPin: string) => {
+    if (!checkHydrationReady('تغيير الرمز السري للموزع')) return;
     setDistributorPinState(newPin);
     safeStorage.setItem(STORAGE_PREFIX + 'distributor_pin', newPin);
     pushStateToCloud({ distributorPin: newPin });
@@ -1866,6 +2460,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     wholesaleCardPrice?: number;
     notes?: string;
   }): PrintBatch => {
+    if (!checkHydrationReady('إضافة دفعة طباعة')) {
+      return null as any;
+    }
     const config = CARD_CATEGORIES_CONFIG[category];
     const isCardBatch = batchType === 'cards' || (cardsCount !== undefined && cardsCount > 0);
     const resolvedCardUnitPrice = wholesaleCardPrice ?? config.defaultWholesaleCardPrice ?? Math.round((wholesaleSheetPrice ?? config.defaultWholesaleSheetPrice) / config.defaultCardsPerSheet);
@@ -1887,10 +2484,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const monthBatchNumber = categoryBatchNumber;
     const batchId = `BATCH-2026-${String(batchNumber).padStart(3, '0')}`;
     
+    const defCards = config.defaultCardsPerSheet || 60;
     const totalCards = isCardBatch ? Number(cardsCount) : sheetsCount * cardsPerSheet;
     const totalFaceValue = totalCards * config.nominalValue;
     const totalWholesaleValue = isCardBatch ? totalCards * resolvedCardUnitPrice : sheetsCount * unitPrice;
-    const effectiveSheetsCount = isCardBatch ? Number((totalCards / config.defaultCardsPerSheet).toFixed(2)) : sheetsCount;
+    const fullSheetsFromCards = isCardBatch ? Math.floor(totalCards / defCards) : sheetsCount;
+    const remainderCards = isCardBatch ? totalCards % defCards : 0;
+    const effectiveSheetsCount = isCardBatch
+      ? (remainderCards === 0 ? fullSheetsFromCards : Number((totalCards / defCards).toFixed(2)))
+      : sheetsCount;
 
     const newBatch: PrintBatch = {
       id: batchId,
@@ -1901,12 +2503,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       date,
       accountingMonth: targetMonth,
       sheetsCount: effectiveSheetsCount,
-      cardsPerSheet: isCardBatch ? totalCards : cardsPerSheet,
+      cardsPerSheet: defCards,
       totalCards,
       totalFaceValue,
       wholesaleSheetPrice: unitPrice,
       wholesaleCardPrice: resolvedCardUnitPrice,
-      batchType: isCardBatch ? 'cards' : 'sheets',
+      batchType: isCardBatch && remainderCards > 0 && fullSheetsFromCards === 0 ? 'cards' : 'sheets',
       totalWholesaleValue,
       notes,
       createdAt: new Date().toISOString(),
@@ -1916,23 +2518,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Generate individual sheet leaves for leaf-by-leaf tracking
     const newSheets: SheetLeaf[] = [];
     if (isCardBatch) {
-      // Create a dedicated card-voucher leaf containing the exact number of cards
-      const leafNumber = 1;
-      const sheetCode = `QZ-${category}-B${batchNumber}-C${totalCards}`;
-      newSheets.push({
-        leafNumber,
-        batchNumber,
-        categoryBatchNumber,
-        monthBatchNumber,
-        accountingMonth: targetMonth,
-        sheetCode,
-        batchId,
-        category,
-        cardsCount: totalCards,
-        status: 'admin_custody',
-        currentHolder: 'admin',
-        timestamp: new Date().toISOString(),
-      });
+      if (fullSheetsFromCards > 0) {
+        for (let i = 1; i <= fullSheetsFromCards; i++) {
+          const leafNumber = i;
+          const sheetCode = `QZ-${category}-B${batchNumber}-S${String(leafNumber).padStart(3, '0')}`;
+          newSheets.push({
+            leafNumber,
+            batchNumber,
+            categoryBatchNumber,
+            monthBatchNumber,
+            accountingMonth: targetMonth,
+            sheetCode,
+            batchId,
+            category,
+            cardsCount: defCards,
+            status: 'admin_custody',
+            currentHolder: 'admin',
+            timestamp: new Date().toISOString(),
+          });
+        }
+        if (remainderCards > 0) {
+          const leafNumber = fullSheetsFromCards + 1;
+          const sheetCode = `QZ-${category}-B${batchNumber}-S${String(leafNumber).padStart(3, '0')}-P${remainderCards}`;
+          newSheets.push({
+            leafNumber,
+            batchNumber,
+            categoryBatchNumber,
+            monthBatchNumber,
+            accountingMonth: targetMonth,
+            sheetCode,
+            batchId,
+            category,
+            cardsCount: remainderCards,
+            status: 'admin_custody',
+            currentHolder: 'admin',
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } else {
+        const leafNumber = 1;
+        const sheetCode = `QZ-${category}-B${batchNumber}-C${totalCards}`;
+        newSheets.push({
+          leafNumber,
+          batchNumber,
+          categoryBatchNumber,
+          monthBatchNumber,
+          accountingMonth: targetMonth,
+          sheetCode,
+          batchId,
+          category,
+          cardsCount: totalCards,
+          status: 'admin_custody',
+          currentHolder: 'admin',
+          timestamp: new Date().toISOString(),
+        });
+      }
     } else {
       for (let i = 1; i <= sheetsCount; i++) {
         const leafNumber = i;
@@ -2236,6 +2876,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     batchId?: string;
     notes?: string;
   }): CustodyTransfer => {
+    if (!checkHydrationReady('تحويل عهدة للموزع')) {
+      return null as any;
+    }
     const config = CARD_CATEGORIES_CONFIG[category];
     const transferNumber = transfersRef.current.length + 1;
     const transferId = `TR-2026-${String(transferNumber).padStart(4, '0')}`;
@@ -3415,6 +4058,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     batchId?: string;
     custodySource?: 'distributor_custody' | 'admin_custody';
   }): DeliveryVoucher => {
+    if (!checkHydrationReady('توريد كروت لمنفذ')) {
+      throw new Error('النظام قيد تدقيق ومطابقة السجلات السحابية، يرجى الانتظار بضع ثوانٍ.');
+    }
     const outlet = outlets.find((o) => o.id === outletId);
     if (!outlet) throw new Error('المنفذ غير موجود');
 
@@ -3692,6 +4338,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     notes?: string;
     date?: string;
   }): PaymentVoucher => {
+    if (!checkHydrationReady('قبض نقدية من منفذ')) {
+      throw new Error('النظام قيد تدقيق ومطابقة السجلات السحابية، يرجى الانتظار بضع ثوانٍ.');
+    }
     const outlet = outlets.find((o) => o.id === outletId);
     if (!outlet) throw new Error('المنفذ غير موجود');
 
@@ -4584,13 +5233,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newDamage;
   };
 
-  // 10. Outlets Management
+  // 10. Outlets Management & Duplicate Prevention
+  const normalizeArabicText = (text: string): string => {
+    if (!text) return '';
+    return text
+      .trim()
+      .toLowerCase()
+      .replace(/[\u064B-\u065F\u0670]/g, '') // remove Arabic tashkeel / vowels
+      .replace(/[أإآٱ]/g, 'ا') // unify alif forms
+      .replace(/ة/g, 'ه') // unify ta marbuta
+      .replace(/ى/g, 'ي') // unify alif maqsura
+      .replace(/[^\w\s\u0600-\u06FF]/gi, '') // remove special punctuation
+      .replace(/\s+/g, ' '); // collapse extra spaces
+  };
+
+  const checkOutletNameExists = (name: string, excludeId?: string): Outlet | null => {
+    if (!name || !name.trim()) return null;
+    const targetNorm = normalizeArabicText(name);
+    return (
+      outletsRef.current.find(
+        (o) => o.id !== excludeId && normalizeArabicText(o.name) === targetNorm
+      ) || null
+    );
+  };
+
   const addOutlet = (
     data: Omit<Outlet, 'id' | 'currentDebt' | 'totalDeliveredAmount' | 'totalPaidAmount' | 'createdAt'>
   ): Outlet => {
+    const trimmedName = (data.name || '').trim();
+    if (!trimmedName) {
+      soundService.playAlert();
+      throw new Error('يرجى كتابة اسم المنفذ أو المحل');
+    }
+
+    // Strict Validation: Prevent duplicate outlet by name
+    const existingDuplicate = checkOutletNameExists(trimmedName);
+    if (existingDuplicate) {
+      soundService.playAlert();
+      throw new Error(
+        `تنبيه تدقيق: يوجد منفذ مسجل مسبقاً بنفس الاسم ("${existingDuplicate.name}" - الكود: ${existingDuplicate.id}). تم منع إنشاء سجل مكرر لحماية دقة الحسابات وسقف الدين.`
+      );
+    }
+
     const newId = `OUT-${String(outletsRef.current.length + 1).padStart(3, '0')}`;
     const newOutlet: Outlet = normalizeOutlet({
       ...data,
+      name: trimmedName,
       id: newId,
       currentDebt: 0, // Starts at 0
       totalDeliveredAmount: 0,
@@ -4612,13 +5300,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateOutlet = (id: string, updates: Partial<Outlet>) => {
+    if (updates.name && updates.name.trim()) {
+      const trimmedName = updates.name.trim();
+      const existingDuplicate = checkOutletNameExists(trimmedName, id);
+      if (existingDuplicate) {
+        soundService.playAlert();
+        throw new Error(
+          `لا يمكن تغيير الاسم إلى "${trimmedName}" لأنه مستخدم بالفعل لمنفذ آخر ("${existingDuplicate.name}" - كود: ${existingDuplicate.id}). تم منع التكرار.`
+        );
+      }
+    }
+
     let targetName = '';
     let oldName = '';
     const updated = outletsRef.current.map((o) => {
       if (o.id === id) {
         oldName = o.name;
-        targetName = updates.name || o.name;
-        return normalizeOutlet({ ...o, ...updates });
+        targetName = updates.name ? updates.name.trim() : o.name;
+        return normalizeOutlet({ ...o, ...updates, name: targetName });
       }
       return o;
     });
@@ -4629,8 +5328,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {}
 
     // Cascade name update to deliveries and sheets if renamed
-    if (updates.name && oldName && updates.name !== oldName) {
-      const newOutletName: string = updates.name;
+    if (updates.name && oldName && updates.name.trim() !== oldName) {
+      const newOutletName: string = updates.name.trim();
       const updatedDeliveries = deliveriesRef.current.map((d) => {
         if (d.outletId === id || d.outletName === oldName) {
           return { ...d, outletName: newOutletName };
@@ -4686,6 +5385,157 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
+  // Safe deduplication tool to merge any duplicate outlets sharing identical names without losing vouchers
+  const mergeDuplicateOutletsByName = (): { success: boolean; mergedCount: number; message: string } => {
+    const outletsList = [...outletsRef.current];
+    const grouped = new Map<string, Outlet[]>();
+
+    for (const o of outletsList) {
+      const norm = normalizeArabicText(o.name);
+      if (!grouped.has(norm)) {
+        grouped.set(norm, []);
+      }
+      grouped.get(norm)!.push(o);
+    }
+
+    let totalMerged = 0;
+    const detailsList: string[] = [];
+
+    for (const [, group] of grouped.entries()) {
+      if (group.length > 1) {
+        // Sort: prioritize outlet with higher activity or lower ID
+        group.sort((a, b) => {
+          const actA = (a.totalDeliveredAmount || 0) + (a.totalPaidAmount || 0);
+          const actB = (b.totalDeliveredAmount || 0) + (b.totalPaidAmount || 0);
+          if (actB !== actA) return actB - actA;
+          return a.id.localeCompare(b.id);
+        });
+
+        const primary = group[0];
+        const duplicates = group.slice(1);
+
+        for (const dup of duplicates) {
+          // Reassign deliveries
+          const dupDeliveries = deliveriesRef.current.filter(
+            (d) => d.outletId === dup.id || d.outletName === dup.name
+          );
+          if (dupDeliveries.length > 0) {
+            const updatedDel = deliveriesRef.current.map((d) => {
+              if (d.outletId === dup.id || d.outletName === dup.name) {
+                return { ...d, outletId: primary.id, outletName: primary.name };
+              }
+              return d;
+            });
+            deliveriesRef.current = updatedDel;
+            setDeliveries(updatedDel);
+            try {
+              safeStorage.setItem(STORAGE_PREFIX + 'deliveries', JSON.stringify(updatedDel));
+            } catch {}
+          }
+
+          // Reassign payments
+          const dupPayments = paymentsRef.current.filter(
+            (p) => p.outletId === dup.id || p.outletName === dup.name
+          );
+          if (dupPayments.length > 0) {
+            const updatedPay = paymentsRef.current.map((p) => {
+              if (p.outletId === dup.id || p.outletName === dup.name) {
+                return { ...p, outletId: primary.id, outletName: primary.name };
+              }
+              return p;
+            });
+            paymentsRef.current = updatedPay;
+            setPayments(updatedPay);
+            try {
+              safeStorage.setItem(STORAGE_PREFIX + 'payments', JSON.stringify(updatedPay));
+            } catch {}
+          }
+
+          // Reassign sheets
+          const updatedSheets = sheetsRef.current.map((s) => {
+            if (s.outletId === dup.id || s.assignedOutletId === dup.id) {
+              return {
+                ...s,
+                outletId: primary.id,
+                outletName: primary.name,
+                assignedOutletId: primary.id,
+                assignedOutletName: primary.name,
+              };
+            }
+            return s;
+          });
+          sheetsRef.current = updatedSheets;
+          setSheets(updatedSheets);
+          try {
+            safeStorage.setItem(STORAGE_PREFIX + 'sheets', JSON.stringify(updatedSheets));
+          } catch {}
+
+          totalMerged++;
+          detailsList.push(`دمج (${dup.id}: ${dup.name}) في (${primary.id}: ${primary.name})`);
+        }
+      }
+    }
+
+    if (totalMerged > 0) {
+      // Retain one unique outlet per normalized name
+      const uniqueOutletsMap = new Map<string, Outlet>();
+      for (const o of outletsRef.current) {
+        const norm = normalizeArabicText(o.name);
+        if (!uniqueOutletsMap.has(norm)) {
+          uniqueOutletsMap.set(norm, o);
+        }
+      }
+      const cleanedOutlets = Array.from(uniqueOutletsMap.values()).map((o) => {
+        const normName = normalizeArabicText(o.name);
+        const oDeliveries = deliveriesRef.current.filter(
+          (d) => d.outletId === o.id || normalizeArabicText(d.outletName) === normName
+        );
+        const oPayments = paymentsRef.current.filter(
+          (p) => p.outletId === o.id || normalizeArabicText(p.outletName) === normName
+        );
+        const totDel = oDeliveries.reduce((sum, d) => sum + (d.totalAmount || 0), 0);
+        const totCash = oDeliveries.reduce((sum, d) => sum + (d.cashPaidNow || 0), 0);
+        const totPay = oPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+        const curDebt = totDel - (totCash + totPay);
+        return {
+          ...o,
+          totalDeliveredAmount: totDel,
+          totalPaidAmount: totCash + totPay,
+          currentDebt: Math.max(0, curDebt),
+        };
+      });
+
+      outletsRef.current = cleanedOutlets;
+      setOutlets(cleanedOutlets);
+      try {
+        safeStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(cleanedOutlets));
+      } catch {}
+      pushStateToCloud({
+        outlets: cleanedOutlets,
+        deliveries: deliveriesRef.current,
+        payments: paymentsRef.current,
+        sheets: sheetsRef.current,
+      });
+
+      addAudit(
+        'OUTLET_BULK_MIGRATION',
+        `تم دمج وإلغاء تكرار ${totalMerged} منافذ مكررة مع ترحيل كافة السندات والديون بأمان: ${detailsList.join(' | ')}`
+      );
+      soundService.playSuccess();
+      return {
+        success: true,
+        mergedCount: totalMerged,
+        message: `تم دمج ${totalMerged} منفذ مكرر بنجاح وترحيل كافة السندات والديون المحاسبية دون أي فقدان للبيانات.`,
+      };
+    }
+
+    return {
+      success: true,
+      mergedCount: 0,
+      message: 'لا توجد منافذ مكررة حالياً، جميع أسماء المنافذ فريدة ومطابقة.',
+    };
+  };
+
   // 10.C Expenses & Accounting (تسجيل وإدارة المصروفات والنفقات التشغيلية والرأسمالية)
   const createExpense = ({
     title,
@@ -4712,6 +5562,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     date?: string;
     status?: 'paid' | 'pending' | 'credit';
   }): ExpenseItem => {
+    if (!checkHydrationReady('تسجيل مصروف')) {
+      throw new Error('النظام قيد تدقيق ومطابقة السجلات السحابية، يرجى الانتظار بضع ثوانٍ.');
+    }
     const expNum = expensesRef.current.length + 1;
     const newId = `EXP-2026-${String(expNum).padStart(4, '0')}`;
     const newExpense: ExpenseItem = {
@@ -5191,6 +6044,136 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  // 10.D Comprehensive Outlet Debt Audit & Dynamic Reconciliation (دالة فحص وتدقيق وتصحيح ديون المنافذ)
+  const auditAndReconcileOutletDebts = (options: { autoFix?: boolean } = { autoFix: true }): OutletDebtAuditReport => {
+    const shouldFix = options.autoFix !== false;
+    const currentOutlets = sanitizeOutletsList([...outletsRef.current]);
+    const currentDeliveries = [...deliveriesRef.current];
+    const currentPayments = [...paymentsRef.current];
+
+    const details: OutletDebtAuditItem[] = [];
+    let discrepancyCount = 0;
+    let fixedCount = 0;
+    let totalDeliveredNetwork = 0;
+    let totalCashAtDeliveryNetwork = 0;
+    let totalPaymentsNetwork = 0;
+    let totalPaidNetwork = 0;
+    let networkExpectedDebt = 0;
+    let networkRecordedDebt = 0;
+
+    const reconciledList: Outlet[] = [];
+
+    // Ensure all 9 canonical network outlets exist in the audit
+    const outletsMap = new Map<string, Outlet>();
+    for (const baseO of INITIAL_CLEAN_OUTLETS) {
+      outletsMap.set(baseO.id, { ...baseO });
+    }
+    for (const o of currentOutlets) {
+      if (o && o.id) {
+        const existing = outletsMap.get(o.id);
+        outletsMap.set(o.id, existing ? { ...existing, ...o } : o);
+      }
+    }
+
+    for (const outlet of outletsMap.values()) {
+      const fin = calculateOutletFinancials(outlet, currentDeliveries, currentPayments);
+
+      const recordedDebt = Number(outlet.currentDebt) || 0;
+      const expectedDebt = fin.currentDebt;
+      const discrepancy = recordedDebt - expectedDebt;
+      const isBalanced = discrepancy === 0;
+
+      if (!isBalanced) {
+        discrepancyCount++;
+      }
+
+      totalDeliveredNetwork += fin.totalDeliveredAmount;
+      totalCashAtDeliveryNetwork += fin.cashAtDelivery;
+      totalPaymentsNetwork += fin.paymentsReceived;
+      totalPaidNetwork += fin.totalPaidAmount;
+      networkExpectedDebt += expectedDebt;
+      networkRecordedDebt += recordedDebt;
+
+      const creditLimit = Number(outlet.creditLimit) || 0;
+      const isOverLimit = creditLimit > 0 && expectedDebt > creditLimit;
+
+      details.push({
+        outletId: outlet.id,
+        outletName: outlet.name,
+        deliveriesCount: fin.deliveriesCount,
+        paymentsCount: fin.paymentsCount,
+        cardsCount: fin.totalCardsDelivered,
+        sheetsCount: fin.totalSheetsDelivered,
+        totalDelivered: fin.totalDeliveredAmount,
+        cashAtDelivery: fin.cashAtDelivery,
+        paymentsReceived: fin.paymentsReceived,
+        totalPaid: fin.totalPaidAmount,
+        recordedDebt,
+        expectedDebt,
+        discrepancy,
+        isBalanced,
+        creditLimit,
+        isOverLimit,
+      });
+
+      const needsCorrection =
+        !isBalanced ||
+        outlet.totalDeliveredAmount !== fin.totalDeliveredAmount ||
+        outlet.totalPaidAmount !== fin.totalPaidAmount;
+
+      if (shouldFix && needsCorrection) {
+        fixedCount++;
+        reconciledList.push({
+          ...outlet,
+          totalDeliveredAmount: fin.totalDeliveredAmount,
+          totalPaidAmount: fin.totalPaidAmount,
+          currentDebt: expectedDebt,
+        });
+      } else {
+        reconciledList.push(outlet);
+      }
+    }
+
+    if (shouldFix && fixedCount > 0) {
+      const sanitizedReconciled = sanitizeOutletsList(reconciledList);
+      outletsRef.current = sanitizedReconciled;
+      setOutlets(sanitizedReconciled);
+      try {
+        safeStorage.setItem(STORAGE_PREFIX + 'outlets', JSON.stringify(sanitizedReconciled));
+      } catch {}
+
+      addAudit(
+        'OUTLET_DEBT_RECONCILE',
+        `تم فحص وتدقيق وتصحيح ديون المنافذ آلياً: تصحيح ${fixedCount} منافذ، إجمالي الديون المعتمدة ${networkExpectedDebt.toLocaleString('ar-YE')} ر.ي، وإجمالي التوريد التراكمي ${totalDeliveredNetwork.toLocaleString('ar-YE')} ر.ي.`
+      );
+
+      setTimeout(() => {
+        pushStateToCloud();
+      }, 300);
+    }
+
+    const report: OutletDebtAuditReport = {
+      timestamp: new Date().toISOString(),
+      totalOutletsAudited: details.length,
+      balancedOutletsCount: details.length - discrepancyCount,
+      discrepancyOutletsCount: discrepancyCount,
+      totalDeliveredNetwork,
+      totalCashAtDeliveryNetwork,
+      totalPaymentsNetwork,
+      totalPaidNetwork,
+      networkExpectedDebt,
+      networkRecordedDebt,
+      totalDiscrepancy: networkRecordedDebt - networkExpectedDebt,
+      isFullyBalanced: discrepancyCount === 0,
+      details,
+      autoFixed: shouldFix && fixedCount > 0,
+      fixedOutletsCount: fixedCount,
+    };
+
+    setLastDebtAuditReport(report);
+    return report;
+  };
+
   // 11. Distributor Permissions
   const updatePermissions = (newPerms: Partial<DistributorPermissions>) => {
     setPermissions((prev) => {
@@ -5308,6 +6291,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       value={{
         currentRole,
         setCurrentRole,
+        logoutSession,
         adminPin,
         setAdminPin,
         verifyAdminPin,
@@ -5334,6 +6318,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         notifications,
         permissions,
         isCloudConnected,
+        hasLoadedInitialCloudState,
+        isHydratingCloud,
+        hydrationStatus,
+        isHydrated,
+        hydrationValidation,
+        conflictLogs,
+        dismissConflictAlert,
+        retryHydration,
         syncNowToCloud,
         isOnline,
         offlineQueue,
@@ -5394,9 +6386,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addOutlet,
         updateOutlet,
         deleteOutlet,
+        checkOutletNameExists,
+        mergeDuplicateOutletsByName,
         migrationRecords,
         bulkMigrateOutletRecords,
         autoFixLegacyOutletRecords,
+        auditAndReconcileOutletDebts,
+        lastDebtAuditReport,
         updatePermissions,
         markNotificationAsRead,
         markAllNotificationsAsRead,

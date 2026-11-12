@@ -71,7 +71,9 @@ export interface PrintBatch {
 
 export interface CustodyTransfer {
   id: string; // TR-2026-XXXX
+  transferNumber?: number;
   date: string;
+  accountingMonth?: string;
   category: CardCategory;
   batchId?: string;
   sheetsCount: number;
@@ -84,6 +86,9 @@ export interface CustodyTransfer {
   notes?: string;
   fromUser: string;
   toUser: string;
+  recipientName?: string;
+  status?: string;
+  receivedAt?: string;
   createdAt: string;
 }
 
@@ -233,7 +238,12 @@ export interface AuditLogItem {
     | 'EXPENSE_DELETED'
     | 'BUDGET_UPDATED'
     | 'BUDGET_DELETED'
-    | 'SYSTEM_RESET';
+    | 'SYSTEM_RESET'
+    | 'DATA_CONFLICT'
+    | 'HYDRATION_VERIFIED'
+    | 'HYDRATION_BLOCKED'
+    | 'ZERO_WIPE_PREVENTED'
+    | 'OUTLET_DEBT_RECONCILE';
   actorName: string;
   actorRole: UserRole;
   details: string;
@@ -419,5 +429,103 @@ export interface MonthlyBudget {
   notes?: string;
   updatedAt?: string;
   updatedBy?: string;
+}
+
+// ==========================================
+// Hydration Validation & Data Conflict Types
+// ==========================================
+
+export type HydrationStatus =
+  | 'unhydrated'
+  | 'hydrating'
+  | 'validating'
+  | 'ready'
+  | 'conflict_detected'
+  | 'error';
+
+export interface DataConflictLog {
+  id: string; // CFL-XXXX
+  timestamp: string;
+  type:
+    | 'EMPTY_OVERWRITE_ATTEMPT'
+    | 'COUNT_REGRESSION'
+    | 'CORRUPTED_PAYLOAD'
+    | 'SHEET_STATUS_CONFLICT'
+    | 'UNAUTHORIZED_WIPE';
+  severity: 'critical' | 'warning' | 'info';
+  message: string;
+  source: 'cloud_sync' | 'local_mutation' | 'hydration_check';
+  localSnapshot: {
+    batches: number;
+    sheets: number;
+    transfers: number;
+    outlets: number;
+    deliveries: number;
+    payments: number;
+  };
+  incomingSnapshot?: {
+    batches?: number;
+    sheets?: number;
+    transfers?: number;
+    outlets?: number;
+    deliveries?: number;
+    payments?: number;
+  };
+  resolvedAction: 'BLOCKED' | 'PRESERVED_LOCAL' | 'FORCE_MERGED';
+}
+
+export interface HydrationValidationReport {
+  isValid: boolean;
+  status: HydrationStatus;
+  batchesCount: number;
+  sheetsCount: number;
+  transfersCount: number;
+  outletsCount: number;
+  deliveriesCount: number;
+  paymentsCount: number;
+  errors: string[];
+  warnings: string[];
+  lastValidatedAt: string | null;
+}
+
+// ==========================================
+// Outlet Debt Audit & Reconciliation Types
+// ==========================================
+
+export interface OutletDebtAuditItem {
+  outletId: string;
+  outletName: string;
+  deliveriesCount: number;
+  paymentsCount: number;
+  cardsCount: number;
+  sheetsCount: number;
+  totalDelivered: number;
+  cashAtDelivery: number;
+  paymentsReceived: number;
+  totalPaid: number;
+  recordedDebt: number;
+  expectedDebt: number;
+  discrepancy: number;
+  isBalanced: boolean;
+  creditLimit: number;
+  isOverLimit: boolean;
+}
+
+export interface OutletDebtAuditReport {
+  timestamp: string;
+  totalOutletsAudited: number;
+  balancedOutletsCount: number;
+  discrepancyOutletsCount: number;
+  totalDeliveredNetwork: number;
+  totalCashAtDeliveryNetwork: number;
+  totalPaymentsNetwork: number;
+  totalPaidNetwork: number;
+  networkExpectedDebt: number;
+  networkRecordedDebt: number;
+  totalDiscrepancy: number;
+  isFullyBalanced: boolean;
+  details: OutletDebtAuditItem[];
+  autoFixed: boolean;
+  fixedOutletsCount: number;
 }
 

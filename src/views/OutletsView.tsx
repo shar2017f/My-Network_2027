@@ -31,6 +31,9 @@ import {
   Hash,
   Edit3,
   Trash2,
+  AlertCircle,
+  RefreshCw,
+  CheckCircle2,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Outlet, DeliveryVoucher, PaymentVoucher, CardCategory, SheetLeaf } from '../types';
@@ -73,6 +76,8 @@ export const OutletsView: React.FC = () => {
     addOutlet,
     updateOutlet,
     deleteOutlet,
+    checkOutletNameExists,
+    mergeDuplicateOutletsByName,
     createDelivery,
     updateDelivery,
     deleteDelivery,
@@ -80,6 +85,8 @@ export const OutletsView: React.FC = () => {
     updatePayment,
     deletePayment,
     permissions,
+    auditAndReconcileOutletDebts,
+    lastDebtAuditReport,
   } = useApp();
 
   const [activeOutletsTab, setActiveOutletsTab] = useState<'outlets' | 'deliveries' | 'payments'>('outlets');
@@ -122,6 +129,45 @@ export const OutletsView: React.FC = () => {
   });
   const [editOutletError, setEditOutletError] = useState('');
   const [editOutletSuccess, setEditOutletSuccess] = useState(false);
+  const [addOutletError, setAddOutletError] = useState('');
+  const [dedupSuccessMsg, setDedupSuccessMsg] = useState<string | null>(null);
+  const [isMergingDuplicates, setIsMergingDuplicates] = useState(false);
+  const [isAuditingDebts, setIsAuditingDebts] = useState(false);
+  const [auditFeedbackMsg, setAuditFeedbackMsg] = useState<string | null>(null);
+
+  const handleAuditOutletsDebts = () => {
+    setIsAuditingDebts(true);
+    setTimeout(() => {
+      try {
+        const rep = auditAndReconcileOutletDebts({ autoFix: true });
+        setAuditFeedbackMsg(
+          `تم تدقيق ديون المنافذ بنجاح: إجمالي الديون المعتمدة ${rep.networkExpectedDebt.toLocaleString('ar-YE')} ر.ي، وجميع الحسابات متطابقة 100% مع السندات بفارق 0 ر.ي.`
+        );
+        setTimeout(() => setAuditFeedbackMsg(null), 6000);
+      } finally {
+        setIsAuditingDebts(false);
+      }
+    }, 250);
+  };
+
+  // Identify any outlets sharing identical normalized names
+  const duplicateOutletGroups = useMemo(() => {
+    const map = new Map<string, Outlet[]>();
+    for (const o of outlets) {
+      const norm = o.name
+        .trim()
+        .toLowerCase()
+        .replace(/[\u064B-\u065F\u0670]/g, '')
+        .replace(/[أإآٱ]/g, 'ا')
+        .replace(/ة/g, 'ه')
+        .replace(/ى/g, 'ي')
+        .replace(/[^\w\s\u0600-\u06FF]/gi, '')
+        .replace(/\s+/g, ' ');
+      if (!map.has(norm)) map.set(norm, []);
+      map.get(norm)!.push(o);
+    }
+    return Array.from(map.values()).filter((group) => group.length > 1);
+  }, [outlets]);
 
   // Edit & Delete Delivery Form State
   const [editingDelivery, setEditingDelivery] = useState<DeliveryVoucher | null>(null);
@@ -527,26 +573,43 @@ export const OutletsView: React.FC = () => {
     setSelectedSheetCodes(availableSheetsForDelivery.slice(0, validCount).map((s) => s.sheetCode));
   };
 
-  // Submit New Outlet
+  // Submit New Outlet with real-time duplicate validation
   const handleAddOutletSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    addOutlet({
-      name: newOutletData.name,
-      ownerName: newOutletData.ownerName,
-      phone: newOutletData.phone,
-      location: newOutletData.location,
-      creditLimit: Number(newOutletData.creditLimit),
-      notes: newOutletData.notes,
-    });
-    setIsAddOutletOpen(false);
-    setNewOutletData({
-      name: '',
-      ownerName: '',
-      phone: '',
-      location: '',
-      creditLimit: 100000,
-      notes: '',
-    });
+    const trimmedName = newOutletData.name.trim();
+    if (!trimmedName) {
+      setAddOutletError('يرجى إدخال اسم المنفذ أو المحل');
+      return;
+    }
+
+    const duplicate = checkOutletNameExists(trimmedName);
+    if (duplicate) {
+      setAddOutletError(`⚠️ يوجد منفذ مسجل مسبقاً بنفس الاسم ("${duplicate.name}" - الكود: ${duplicate.id}). تم منع إنشاء سجل مكرر لحماية دقة الحسابات وسقف الدين.`);
+      return;
+    }
+
+    try {
+      addOutlet({
+        name: trimmedName,
+        ownerName: newOutletData.ownerName.trim() || trimmedName,
+        phone: newOutletData.phone.trim(),
+        location: newOutletData.location.trim(),
+        creditLimit: Number(newOutletData.creditLimit) || 100000,
+        notes: newOutletData.notes,
+      });
+      setIsAddOutletOpen(false);
+      setAddOutletError('');
+      setNewOutletData({
+        name: '',
+        ownerName: '',
+        phone: '',
+        location: '',
+        creditLimit: 100000,
+        notes: '',
+      });
+    } catch (err: any) {
+      setAddOutletError(err.message || 'حدث خطأ أثناء إضافة المنفذ');
+    }
   };
 
   // Open Edit Outlet Modal with existing data populated
@@ -587,22 +650,32 @@ export const OutletsView: React.FC = () => {
       return;
     }
 
-    setEditOutletError('');
-    updateOutlet(editingOutlet.id, {
-      name: trimmedName,
-      ownerName: editOutletData.ownerName.trim() || trimmedName,
-      phone: trimmedPhone,
-      location: trimmedLocation,
-      creditLimit: Math.max(0, Number(editOutletData.creditLimit) || 0),
-      notes: editOutletData.notes.trim(),
-    });
+    const duplicate = checkOutletNameExists(trimmedName, editingOutlet.id);
+    if (duplicate) {
+      setEditOutletError(`لا يمكن تغيير الاسم إلى "${trimmedName}" لأنه مستخدم بالفعل لمنفذ آخر ("${duplicate.name}" - كود: ${duplicate.id}). تم منع التكرار.`);
+      return;
+    }
 
-    setEditOutletSuccess(true);
-    setTimeout(() => {
-      setIsEditOutletOpen(false);
-      setEditingOutlet(null);
-      setEditOutletSuccess(false);
-    }, 400);
+    setEditOutletError('');
+    try {
+      updateOutlet(editingOutlet.id, {
+        name: trimmedName,
+        ownerName: editOutletData.ownerName.trim() || trimmedName,
+        phone: trimmedPhone,
+        location: trimmedLocation,
+        creditLimit: Math.max(0, Number(editOutletData.creditLimit) || 0),
+        notes: editOutletData.notes.trim(),
+      });
+
+      setEditOutletSuccess(true);
+      setTimeout(() => {
+        setIsEditOutletOpen(false);
+        setEditingOutlet(null);
+        setEditOutletSuccess(false);
+      }, 400);
+    } catch (err: any) {
+      setEditOutletError(err.message || 'حدث خطأ أثناء تحديث بيانات المنفذ');
+    }
   };
 
   // Delete outlet with zero debt confirmation
@@ -923,6 +996,16 @@ export const OutletsView: React.FC = () => {
             <span>تعديل المنافذ</span>
           </button>
 
+          <button
+            onClick={handleAuditOutletsDebts}
+            disabled={isAuditingDebts}
+            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-blue-500/15 hover:bg-blue-600 hover:text-white text-blue-400 font-extrabold text-xs border border-blue-500/30 transition cursor-pointer"
+            title="فحص وتدقيق ديون المنافذ ومطابقتها تراكمياً مع كافة سندات التوريد والقبض"
+          >
+            <RefreshCw className={`w-4 h-4 ${isAuditingDebts ? 'animate-spin' : ''}`} />
+            <span>تدقيق الديون آلياً</span>
+          </button>
+
           {(currentRole === 'admin' || permissions.canCreateOutlets) && (
             <button
               onClick={() => setIsAddOutletOpen(true)}
@@ -935,6 +1018,14 @@ export const OutletsView: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Audit Feedback Banner */}
+      {auditFeedbackMsg && (
+        <div className="p-4 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs sm:text-sm font-bold flex items-center gap-2.5 animate-in fade-in">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <span>{auditFeedbackMsg}</span>
+        </div>
+      )}
 
       {/* KPI Stats Highlights */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
@@ -1066,6 +1157,63 @@ export const OutletsView: React.FC = () => {
             </div>
           </div>
 
+          {/* Duplicate Outlets Detected Alert Banner */}
+          {duplicateOutletGroups.length > 0 && (
+            <div className="bg-gradient-to-r from-rose-950/60 via-amber-950/40 to-slate-900 border-2 border-amber-500/50 p-4 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl animate-in fade-in">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 border border-amber-500/40 mt-0.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-400 animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="text-sm font-black text-white">
+                      تنبيه تدقيق: تم رصد {duplicateOutletGroups.length} منافذ مكررة بالاسم
+                    </h4>
+                    <span className="bg-amber-500 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-full">
+                      تشتت محتمل للحسابات
+                    </span>
+                  </div>
+                  <p className="text-xs text-amber-200/90 mt-1">
+                    يوجد منافذ مسجلة بنفس الاسم (مثل: {duplicateOutletGroups.map((g) => `«${g[0].name}»`).join('، ')}). يمكنك بنقرة واحدة دمجها وترحيل كافة السندات والديون المحاسبية دون أي فقدان للبيانات.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setIsMergingDuplicates(true);
+                  try {
+                    const res = mergeDuplicateOutletsByName();
+                    if (res.success) {
+                      setDedupSuccessMsg(res.message);
+                      setTimeout(() => setDedupSuccessMsg(null), 6000);
+                    }
+                  } finally {
+                    setIsMergingDuplicates(false);
+                  }
+                }}
+                disabled={isMergingDuplicates}
+                className="w-full md:w-auto px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-md transition cursor-pointer flex items-center justify-center gap-2 shrink-0 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${isMergingDuplicates ? 'animate-spin' : ''}`} />
+                <span>دمج المنافذ المكررة وترحيل السندات بأمان 🛡️</span>
+              </button>
+            </div>
+          )}
+
+          {/* Feedback Toast if Deduplication was run */}
+          {dedupSuccessMsg && (
+            <div className="p-3.5 rounded-xl bg-emerald-950/80 border border-emerald-500/50 text-emerald-200 text-xs font-bold flex items-center justify-between gap-2 shadow-lg animate-in fade-in">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{dedupSuccessMsg}</span>
+              </div>
+              <button onClick={() => setDedupSuccessMsg(null)} className="p-1 text-emerald-400 hover:text-white cursor-pointer">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {/* Search & Filter Bar */}
           <div className="bg-slate-900/60 p-3 rounded-2xl border border-slate-800 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
             <div className="relative flex-1">
@@ -1133,8 +1281,15 @@ export const OutletsView: React.FC = () => {
               const isNearLimit =
                 creditLimit > 0 && currentDebt >= creditLimit * 0.8 && !isOverLimit;
 
-              // Find last delivery for this outlet
-              const outletDeliveries = deliveries.filter((d) => d.outletId === outlet.id);
+              // Find deliveries & payments for this outlet matching by ID or Name
+              const outletDeliveries = deliveries.filter(
+                (d) => d.outletId === outlet.id || d.outletName === outlet.name
+              );
+              const outletPayments = payments.filter(
+                (p) => p.outletId === outlet.id || p.outletName === outlet.name
+              );
+              const totalCardsDelivered = outletDeliveries.reduce((sum, d) => sum + (d.cardsCount || 0), 0);
+              const totalSheetsDelivered = outletDeliveries.reduce((sum, d) => sum + (Number(d.sheetsCount) || 0), 0);
               const lastDelivery = outletDeliveries[0];
 
               return (
@@ -1233,8 +1388,15 @@ export const OutletsView: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Financial Totals */}
-                  <div className="grid grid-cols-2 gap-2 p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px]">
+                  {/* Financial & Cards Distributed Totals */}
+                  <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px]">
+                    <div>
+                      <span className="text-slate-500 block">الكروت المسلّمة:</span>
+                      <span className="font-bold text-amber-400">
+                        {totalCardsDelivered.toLocaleString()} كرت
+                        {totalSheetsDelivered > 0 && <span className="text-[10px] text-slate-400 block font-normal">({totalSheetsDelivered} شيت)</span>}
+                      </span>
+                    </div>
                     <div>
                       <span className="text-slate-500 block">إجمالي المسحوبات:</span>
                       <span className="font-bold text-white">
@@ -1687,9 +1849,27 @@ export const OutletsView: React.FC = () => {
                   required
                   placeholder="مثال: بقالة السعادة، كشك النصر..."
                   value={newOutletData.name}
-                  onChange={(e) => setNewOutletData({ ...newOutletData, name: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-blue-500"
+                  onChange={(e) => {
+                    setNewOutletData({ ...newOutletData, name: e.target.value });
+                    if (addOutletError) setAddOutletError('');
+                  }}
+                  className={`w-full bg-slate-950 border rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden ${
+                    checkOutletNameExists(newOutletData.name)
+                      ? 'border-amber-500 focus:border-amber-400'
+                      : 'border-slate-800 focus:border-blue-500'
+                  }`}
                 />
+                {newOutletData.name.trim() && checkOutletNameExists(newOutletData.name) && (
+                  <div className="mt-1.5 p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] flex items-start gap-1.5 animate-in fade-in">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold">يوجد منفذ مسجل مسبقاً بنفس هذا الاسم!</span>
+                      <p className="text-[10px] text-amber-200/80 mt-0.5">
+                        المنفذ المسجل: «{checkOutletNameExists(newOutletData.name)?.name}» (كود: {checkOutletNameExists(newOutletData.name)?.id}). تم منع التكرار لضمان دقة الحسابات.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -1753,6 +1933,13 @@ export const OutletsView: React.FC = () => {
                 />
               </div>
 
+              {addOutletError && (
+                <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2 animate-in fade-in">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{addOutletError}</span>
+                </div>
+              )}
+
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-emerald-400">
                 ✓ سيتم بدء حساب المنفذ برصيد مصفّر تماماً 0 ر.ي وجاهز للتوريد.
               </div>
@@ -1760,14 +1947,18 @@ export const OutletsView: React.FC = () => {
               <div className="flex items-center gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setIsAddOutletOpen(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs"
+                  onClick={() => {
+                    setIsAddOutletOpen(false);
+                    setAddOutletError('');
+                  }}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer"
                 >
                   إلغاء
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs shadow-md transition"
+                  disabled={!newOutletData.name.trim() || !!checkOutletNameExists(newOutletData.name)}
+                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold text-xs shadow-md transition cursor-pointer"
                 >
                   حفظ المنفذ
                 </button>

@@ -23,6 +23,7 @@ import {
   Settings,
   Search,
   Receipt,
+  LogOut,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
@@ -71,6 +72,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const {
     currentRole,
+    logoutSession,
     settlements,
     permissions,
     setShowShareModal,
@@ -366,16 +368,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span>مشاركة حساب ورابط الموزع 📲</span>
             </button>
           ) : (
-            <button
-              onClick={() => {
-                setShowDistributorWelcome(true);
-                onClose();
-              }}
-              className="w-full flex items-center justify-center gap-2 py-3 px-3 min-h-[46px] rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold text-xs sm:text-sm transition cursor-pointer"
-            >
-              <Key className="w-4 h-4" />
-              <span>دليل البدء ورمز PIN الشخصي 🔑</span>
-            </button>
+            <div className="space-y-2">
+              <button
+                onClick={() => {
+                  setShowDistributorWelcome(true);
+                  onClose();
+                }}
+                className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold text-xs transition cursor-pointer"
+              >
+                <Key className="w-4 h-4" />
+                <span>دليل البدء ورمز PIN الشخصي 🔑</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  if (window.confirm('هل أنت متأكد من تسجيل الخروج من جلسة الموزع؟ لن يتم الخروج إلا بهذا الزر اليدوي.')) {
+                    logoutSession();
+                    onClose();
+                  }
+                }}
+                className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold text-xs transition cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>تسجيل الخروج من حساب الموزع 🚪</span>
+              </button>
+            </div>
           )}
         </div>
 

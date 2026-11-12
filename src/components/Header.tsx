@@ -16,6 +16,8 @@ import {
   Printer,
   Share2,
   Key,
+  LogOut,
+  Lock,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -30,6 +32,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
   const {
     currentRole,
     setCurrentRole,
+    logoutSession,
     adminPin,
     notifications,
     markNotificationAsRead,
@@ -163,30 +166,53 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
             </button>
           )}
 
-          {/* Role Pill Switcher */}
-          <div className="flex items-center p-1 rounded-xl bg-slate-950/80 border border-slate-800 text-xs">
-            <button
-              onClick={() => handleRoleSwitch('admin')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                currentRole === 'admin'
-                  ? 'bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/30'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Shield className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">المسؤول</span>
-            </button>
-            <button
-              onClick={() => handleRoleSwitch('distributor')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                currentRole === 'distributor'
-                  ? 'bg-emerald-500 text-slate-950 shadow-sm shadow-emerald-500/30'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <UserCheck className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">الموزع</span>
-            </button>
+          {/* Role Pill Switcher & Session Controls */}
+          <div className="flex items-center gap-1.5">
+            <div className="flex items-center p-1 rounded-xl bg-slate-950/80 border border-slate-800 text-xs">
+              <button
+                onClick={() => handleRoleSwitch('admin')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                  currentRole === 'admin'
+                    ? 'bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/30'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="التحويل لحساب المسؤول (يتطلب PIN)"
+              >
+                <Shield className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">المسؤول</span>
+              </button>
+              <button
+                onClick={() => handleRoleSwitch('distributor')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                  currentRole === 'distributor'
+                    ? 'bg-emerald-500 text-slate-950 shadow-sm shadow-emerald-500/30'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="التحويل لحساب الموزع الميداني"
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">الموزع</span>
+                {currentRole === 'distributor' && (
+                  <Lock className="w-2.5 h-2.5 text-slate-950" />
+                )}
+              </button>
+            </div>
+
+            {/* Explicit Logout button for distributor */}
+            {currentRole === 'distributor' && (
+              <button
+                onClick={() => {
+                  if (window.confirm('هل أنت متأكد من تسجيل الخروج من جلسة الموزع؟ لن يتم الخروج إلا بهذا الزر اليدوي.')) {
+                    logoutSession();
+                  }
+                }}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold transition shadow-xs cursor-pointer active:scale-95"
+                title="تسجيل الخروج اليدوي من حساب الموزع"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">تسجيل خروج</span>
+              </button>
+            )}
           </div>
 
           {/* Notifications Center */}

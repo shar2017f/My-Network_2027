@@ -12,12 +12,14 @@ import {
   Store,
   Coins,
   AlertTriangle,
+  ShieldAlert,
+  ShieldCheck,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { AuditLogItem } from '../types';
 
 export const AuditLogView: React.FC = () => {
-  const { auditLogs } = useApp();
+  const { auditLogs, conflictLogs } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filterAction, setFilterAction] = useState<string>('all');
@@ -87,6 +89,14 @@ export const AuditLogView: React.FC = () => {
         return { label: 'تدقيق وتوفيق المخزون 🛡️', color: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' };
       case 'CUSTODY_ADJUSTMENT':
         return { label: 'تسوية وتصحيح العجز ⚖️', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
+      case 'DATA_CONFLICT':
+        return { label: 'تعارض بيانات تم صده 🛡️', color: 'bg-rose-500/20 text-rose-300 border-rose-500/30' };
+      case 'HYDRATION_VERIFIED':
+        return { label: 'اكتمال تدقيق السجلات ✅', color: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' };
+      case 'HYDRATION_BLOCKED':
+        return { label: 'حظر تعديل قبل التحميل ⛔', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
+      case 'ZERO_WIPE_PREVENTED':
+        return { label: 'منع تصفير الحسابات 🔒', color: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30' };
       case 'SYSTEM_RESET':
         return { label: 'نظام وأمان', color: 'bg-slate-700 text-slate-300 border-slate-600' };
       default:
@@ -140,6 +150,51 @@ export const AuditLogView: React.FC = () => {
         </button>
       </div>
 
+      {/* 🛡️ Protected Data Conflicts Shield Card */}
+      {conflictLogs && conflictLogs.length > 0 && (
+        <div className="bg-slate-900 border border-amber-500/40 rounded-2xl p-4 shadow-xl">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0">
+                <ShieldAlert className="w-4 h-4 text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-white">سجل تعارضات البيانات المحمية (Anti-Wipe Shield)</h3>
+                <p className="text-[11px] text-slate-400">
+                  تم رصد وتثبيت السجلات لمنع تصفير الحسابات أو استبدالها ببيانات فارغة
+                </p>
+              </div>
+            </div>
+            <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20">
+              {conflictLogs.length} محاولات تم صدها
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            {conflictLogs.map((cfl) => (
+              <div key={cfl.id} className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 text-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-slate-400 text-[10px]">{cfl.id}</span>
+                    <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold text-[10px]">
+                      {cfl.type === 'EMPTY_OVERWRITE_ATTEMPT' ? 'محاولة تفريغ قاعدة البيانات' : 'انخفاض مفاجئ بالحزم'}
+                    </span>
+                    <span className="text-slate-400 text-[10px]">
+                      {new Date(cfl.timestamp).toLocaleTimeString('ar-YE')} - {new Date(cfl.timestamp).toLocaleDateString('ar-YE')}
+                    </span>
+                  </div>
+                  <p className="text-slate-200 text-xs font-semibold">{cfl.message}</p>
+                  <div className="text-[10px] text-slate-400 flex items-center gap-3">
+                    <span>السجلات المحلية المحمية: {cfl.localSnapshot.batches} حزم | {cfl.localSnapshot.sheets} شيت | {cfl.localSnapshot.outlets} منافذ</span>
+                    <span className="text-emerald-400 font-bold">الإجراء: تثبيت السجلات المعتمدة (PRESERVED)</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Filters and Search Bar */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-900/60 p-3 rounded-2xl border border-slate-800">
         <div className="relative sm:col-span-1">
@@ -160,6 +215,8 @@ export const AuditLogView: React.FC = () => {
             className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500 font-bold"
           >
             <option value="all">جميع أنواع العمليات</option>
+            <option value="DATA_CONFLICT">درع الحماية: تعارض بيانات تم صده 🛡️</option>
+            <option value="HYDRATION_VERIFIED">اكتمال تدقيق السجلات السحابية ✅</option>
             <option value="BATCH_CREATED">طباعة الدفعات (جديد)</option>
             <option value="BATCH_UPDATED">تعديل الدفعات</option>
             <option value="BATCH_DELETED">حذف الدفعات</option>
