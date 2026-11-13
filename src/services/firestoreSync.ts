@@ -78,8 +78,9 @@ export function cleanInvalidSheets(sheets: SheetLeaf[]): SheetLeaf[] {
   const seenCodes = new Set<string>();
   return sheets.filter((s) => {
     if (!s || !s.sheetCode) return false;
-    if (s.sheetCode === 'QZ-3000-TR7-C30') return false; // discard deleted transfer leftover
-    if (s.sheetCode === 'QZ-1000-B6-S004-P30-DEL-2026-0028') return false; // discard phantom 1000 delivery for DEL-28 (which belongs to 3000)
+    if (s.sheetCode === 'QZ-3000-TR7-C30') return false;
+    if (s.sheetCode === 'QZ-1000-B11-C300' || s.sheetCode.includes('B11-C300')) return false;
+    if (s.sheetCode === 'QZ-1000-B6-S004-P30-DEL-2026-0028') return false;
     if (seenCodes.has(s.sheetCode)) return false;
     seenCodes.add(s.sheetCode);
     return true;

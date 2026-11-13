@@ -50,7 +50,11 @@ import {
 } from '../utils/batchNaming';
 import { safeStorage, getPersistentRole, setPersistentRole, clearPersistentRole } from '../utils/safeStorage';
 import { requestBackgroundSync, onServiceWorkerSync } from '../services/serviceWorkerRegistration';
-import { doesRecordMatchOutlet, calculateOutletFinancials } from '../utils/outletMatcher';
+import {
+  doesRecordMatchOutlet,
+  calculateOutletFinancials,
+  computeOutletBalance,
+} from '../utils/outletMatcher';
 
 export interface OfflineQueueItem {
   id: string;
@@ -395,6 +399,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Safe normalizer for outlets to prevent any undefined or null field exceptions
   const normalizeOutlet = (o: any, idx = 0): Outlet => {
+    const totalDeliveredAmount =
+      typeof o?.totalDeliveredAmount === 'number' && !isNaN(o.totalDeliveredAmount)
+        ? o.totalDeliveredAmount
+        : 0;
+    const totalPaidAmount =
+      typeof o?.totalPaidAmount === 'number' && !isNaN(o.totalPaidAmount)
+        ? o.totalPaidAmount
+        : 0;
+    const computed = computeOutletBalance(totalDeliveredAmount, totalPaidAmount);
+    const hasTotals = totalDeliveredAmount > 0 || totalPaidAmount > 0;
+    const currentDebt =
+      typeof o?.currentDebt === 'number' && !isNaN(o.currentDebt)
+        ? o.currentDebt
+        : computed.currentDebt;
+    const creditBalance =
+      typeof o?.creditBalance === 'number' && !isNaN(o.creditBalance)
+        ? o.creditBalance
+        : hasTotals
+        ? computed.creditBalance
+        : 0;
+
     return {
       id: o?.id || `OUT-00${idx + 1}`,
       name: o?.name || `منفذ ${idx + 1}`,
@@ -402,9 +427,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       phone: o?.phone || '770000000',
       location: o?.location || 'الشارع العام',
       creditLimit: typeof o?.creditLimit === 'number' && !isNaN(o.creditLimit) ? o.creditLimit : 100000,
-      currentDebt: typeof o?.currentDebt === 'number' && !isNaN(o.currentDebt) ? o.currentDebt : 0,
-      totalDeliveredAmount: typeof o?.totalDeliveredAmount === 'number' && !isNaN(o.totalDeliveredAmount) ? o.totalDeliveredAmount : 0,
-      totalPaidAmount: typeof o?.totalPaidAmount === 'number' && !isNaN(o.totalPaidAmount) ? o.totalPaidAmount : 0,
+      currentDebt,
+      creditBalance,
+      totalDeliveredAmount,
+      totalPaidAmount,
       createdAt: o?.createdAt || '2026-10-01',
       notes: o?.notes || '',
     };
@@ -422,6 +448,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const normalized = normalizeOutlet(list[idx], idx);
       const existing = map.get(normalized.id);
       if (existing) {
+        const mergedTotalDelivered =
+          typeof normalized.totalDeliveredAmount === 'number' && normalized.totalDeliveredAmount > 0
+            ? normalized.totalDeliveredAmount
+            : existing.totalDeliveredAmount;
+        const mergedTotalPaid =
+          typeof normalized.totalPaidAmount === 'number' && normalized.totalPaidAmount > 0
+            ? normalized.totalPaidAmount
+            : existing.totalPaidAmount;
+        const mergedBalance = computeOutletBalance(mergedTotalDelivered, mergedTotalPaid);
+
         map.set(normalized.id, {
           ...existing,
           ...normalized,
@@ -430,9 +466,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           phone: normalized.phone || existing.phone,
           location: normalized.location || existing.location,
           creditLimit: typeof normalized.creditLimit === 'number' && normalized.creditLimit > 0 ? normalized.creditLimit : existing.creditLimit,
-          currentDebt: typeof normalized.currentDebt === 'number' ? normalized.currentDebt : existing.currentDebt,
-          totalDeliveredAmount: typeof normalized.totalDeliveredAmount === 'number' && normalized.totalDeliveredAmount > 0 ? normalized.totalDeliveredAmount : existing.totalDeliveredAmount,
-          totalPaidAmount: typeof normalized.totalPaidAmount === 'number' && normalized.totalPaidAmount > 0 ? normalized.totalPaidAmount : existing.totalPaidAmount,
+          totalDeliveredAmount: mergedTotalDelivered,
+          totalPaidAmount: mergedTotalPaid,
+          currentDebt:
+            typeof normalized.currentDebt === 'number' ? normalized.currentDebt : mergedBalance.currentDebt,
+          creditBalance:
+            typeof normalized.creditBalance === 'number' ? normalized.creditBalance : mergedBalance.creditBalance,
         });
       } else {
         map.set(normalized.id, normalized);
@@ -1629,11 +1668,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const fin = calculateOutletFinancials(rawOutlet, mergedDeliveries, mergedPayments);
 
       const previousDebt = Number(rawOutlet.currentDebt) || 0;
+      const previousCredit = Number(rawOutlet.creditBalance) || 0;
       const previousDelivered = Number(rawOutlet.totalDeliveredAmount) || 0;
       const previousPaid = Number(rawOutlet.totalPaidAmount) || 0;
 
       if (
         previousDebt !== fin.currentDebt ||
+        previousCredit !== fin.creditBalance ||
         previousDelivered !== fin.totalDeliveredAmount ||
         previousPaid !== fin.totalPaidAmount
       ) {
@@ -1645,6 +1686,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         totalDeliveredAmount: fin.totalDeliveredAmount,
         totalPaidAmount: fin.totalPaidAmount,
         currentDebt: fin.currentDebt,
+        creditBalance: fin.creditBalance,
       });
     }
 
@@ -4253,14 +4295,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSheets(updatedSheets);
     checkAndTriggerCriticalStockAlert(category, updatedSheets);
 
-    // Update Outlet financials
+    // Update Outlet financials using netBalance = totalDeliveredAmount - totalPaidAmount
     const updatedOutlets = outletsRef.current.map((o) => {
       if (o.id === outletId) {
+        const nextDelivered = (Number(o.totalDeliveredAmount) || 0) + finalTotalAmount;
+        const nextPaid = (Number(o.totalPaidAmount) || 0) + cashPaidNow;
+        const { currentDebt, creditBalance } = computeOutletBalance(nextDelivered, nextPaid);
         return {
           ...o,
-          currentDebt: o.currentDebt + remainingDebt,
-          totalDeliveredAmount: o.totalDeliveredAmount + finalTotalAmount,
-          totalPaidAmount: o.totalPaidAmount + cashPaidNow,
+          totalDeliveredAmount: nextDelivered,
+          totalPaidAmount: nextPaid,
+          currentDebt,
+          creditBalance,
         };
       }
       return o;
@@ -4364,13 +4410,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: new Date().toISOString(),
     };
 
-    // Update Outlet financials
+    // Update Outlet financials using netBalance = totalDeliveredAmount - totalPaidAmount
     const updatedOutlets = outletsRef.current.map((o) => {
       if (o.id === outletId) {
+        const nextDelivered = Number(o.totalDeliveredAmount) || 0;
+        const nextPaid = (Number(o.totalPaidAmount) || 0) + amount;
+        const { currentDebt, creditBalance } = computeOutletBalance(nextDelivered, nextPaid);
         return {
           ...o,
-          currentDebt: newDebt,
-          totalPaidAmount: o.totalPaidAmount + amount,
+          totalPaidAmount: nextPaid,
+          currentDebt,
+          creditBalance,
         };
       }
       return o;
@@ -4548,17 +4598,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // Reconcile Outlet Debt and Amounts
-    const diffDebt = newRemainingDebt - existing.remainingDebt;
     const diffTotal = newTotalAmount - existing.totalAmount;
     const diffPaid = newCashPaidNow - existing.cashPaidNow;
 
     const updatedOutlets = outletsRef.current.map((o) => {
       if (o.id === existing.outletId) {
+        const nextDelivered = Math.max(0, (Number(o.totalDeliveredAmount) || 0) + diffTotal);
+        const nextPaid = Math.max(0, (Number(o.totalPaidAmount) || 0) + diffPaid);
+        const { currentDebt, creditBalance } = computeOutletBalance(nextDelivered, nextPaid);
         return {
           ...o,
-          currentDebt: Math.max(0, o.currentDebt + diffDebt),
-          totalDeliveredAmount: Math.max(0, o.totalDeliveredAmount + diffTotal),
-          totalPaidAmount: Math.max(0, o.totalPaidAmount + diffPaid),
+          totalDeliveredAmount: nextDelivered,
+          totalPaidAmount: nextPaid,
+          currentDebt,
+          creditBalance,
         };
       }
       return o;
@@ -4626,11 +4679,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Reconcile Outlet Debt and Amounts
     const updatedOutlets = outletsRef.current.map((o) => {
       if (o.id === existing.outletId) {
+        const nextDelivered = Math.max(0, (Number(o.totalDeliveredAmount) || 0) - existing.totalAmount);
+        const nextPaid = Math.max(0, (Number(o.totalPaidAmount) || 0) - existing.cashPaidNow);
+        const { currentDebt, creditBalance } = computeOutletBalance(nextDelivered, nextPaid);
         return {
           ...o,
-          currentDebt: Math.max(0, o.currentDebt - existing.remainingDebt),
-          totalDeliveredAmount: Math.max(0, o.totalDeliveredAmount - existing.totalAmount),
-          totalPaidAmount: Math.max(0, o.totalPaidAmount - existing.cashPaidNow),
+          totalDeliveredAmount: nextDelivered,
+          totalPaidAmount: nextPaid,
+          currentDebt,
+          creditBalance,
         };
       }
       return o;
@@ -4703,10 +4760,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Reconcile Outlet Balance
     const updatedOutlets = outletsRef.current.map((o) => {
       if (o.id === existing.outletId) {
+        const nextDelivered = Number(o.totalDeliveredAmount) || 0;
+        const nextPaid = Math.max(0, (Number(o.totalPaidAmount) || 0) + diffAmount);
+        const { currentDebt, creditBalance } = computeOutletBalance(nextDelivered, nextPaid);
         return {
           ...o,
-          currentDebt: Math.max(0, o.currentDebt - diffAmount),
-          totalPaidAmount: Math.max(0, o.totalPaidAmount + diffAmount),
+          totalPaidAmount: nextPaid,
+          currentDebt,
+          creditBalance,
         };
       }
       return o;
@@ -4755,13 +4816,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'سند القبض المطلوب غير موجود' };
     }
 
-    // Reconcile Outlet: return paid amount back to currentDebt
+    // Reconcile Outlet: return paid amount back to balance
     const updatedOutlets = outletsRef.current.map((o) => {
       if (o.id === existing.outletId) {
+        const nextDelivered = Number(o.totalDeliveredAmount) || 0;
+        const nextPaid = Math.max(0, (Number(o.totalPaidAmount) || 0) - existing.amount);
+        const { currentDebt, creditBalance } = computeOutletBalance(nextDelivered, nextPaid);
         return {
           ...o,
-          currentDebt: o.currentDebt + existing.amount,
-          totalPaidAmount: Math.max(0, o.totalPaidAmount - existing.amount),
+          totalPaidAmount: nextPaid,
+          currentDebt,
+          creditBalance,
         };
       }
       return o;
@@ -5496,12 +5561,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const totDel = oDeliveries.reduce((sum, d) => sum + (d.totalAmount || 0), 0);
         const totCash = oDeliveries.reduce((sum, d) => sum + (d.cashPaidNow || 0), 0);
         const totPay = oPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
-        const curDebt = totDel - (totCash + totPay);
+        const totalPaidAmount = totCash + totPay;
+        const { currentDebt, creditBalance } = computeOutletBalance(totDel, totalPaidAmount);
         return {
           ...o,
           totalDeliveredAmount: totDel,
-          totalPaidAmount: totCash + totPay,
-          currentDebt: Math.max(0, curDebt),
+          totalPaidAmount,
+          currentDebt,
+          creditBalance,
         };
       });
 
@@ -5937,20 +6004,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updatedOutlets = outletsRef.current.map((o) => {
       // Source outlet (if it exists as a formal entity)
       if (sourceOutlet && o.id === sourceOutlet.id) {
+        const nextDelivered = Math.max(0, o.totalDeliveredAmount - totalDeliveredValueMigrated);
+        const nextPaid = Math.max(0, o.totalPaidAmount - totalPaymentsValueMigrated);
+        const { currentDebt, creditBalance } = computeOutletBalance(nextDelivered, nextPaid);
         return normalizeOutlet({
           ...o,
-          totalDeliveredAmount: Math.max(0, o.totalDeliveredAmount - totalDeliveredValueMigrated),
-          totalPaidAmount: Math.max(0, o.totalPaidAmount - totalPaymentsValueMigrated),
-          currentDebt: Math.max(0, o.currentDebt - netDebtTransferred),
+          totalDeliveredAmount: nextDelivered,
+          totalPaidAmount: nextPaid,
+          currentDebt,
+          creditBalance,
         });
       }
       // Target outlet
       if (o.id === targetOutlet.id) {
+        const nextDelivered = o.totalDeliveredAmount + totalDeliveredValueMigrated;
+        const nextPaid = o.totalPaidAmount + totalPaymentsValueMigrated;
+        const { currentDebt, creditBalance } = computeOutletBalance(nextDelivered, nextPaid);
         return normalizeOutlet({
           ...o,
-          totalDeliveredAmount: o.totalDeliveredAmount + totalDeliveredValueMigrated,
-          totalPaidAmount: o.totalPaidAmount + totalPaymentsValueMigrated,
-          currentDebt: Math.max(0, o.currentDebt + netDebtTransferred),
+          totalDeliveredAmount: nextDelivered,
+          totalPaidAmount: nextPaid,
+          currentDebt,
+          creditBalance,
         });
       }
       return o;
@@ -6110,6 +6185,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         totalPaid: fin.totalPaidAmount,
         recordedDebt,
         expectedDebt,
+        creditBalance: fin.creditBalance,
         discrepancy,
         isBalanced,
         creditLimit,
@@ -6118,6 +6194,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const needsCorrection =
         !isBalanced ||
+        (Number(outlet.creditBalance) || 0) !== fin.creditBalance ||
         outlet.totalDeliveredAmount !== fin.totalDeliveredAmount ||
         outlet.totalPaidAmount !== fin.totalPaidAmount;
 
@@ -6128,6 +6205,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           totalDeliveredAmount: fin.totalDeliveredAmount,
           totalPaidAmount: fin.totalPaidAmount,
           currentDebt: expectedDebt,
+          creditBalance: fin.creditBalance,
         });
       } else {
         reconciledList.push(outlet);

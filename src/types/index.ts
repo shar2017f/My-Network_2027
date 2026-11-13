@@ -100,6 +100,7 @@ export interface Outlet {
   location: string;
   creditLimit: number; // سقف الدين الائتماني
   currentDebt: number; // الرصيد الحالي (مصفّر عند البداية)
+  creditBalance?: number; // رصيد دائن (فائض مدفوع لصالح المنفذ)
   totalDeliveredAmount: number; // إجمالي قيمة التوريدات
   totalPaidAmount: number; // إجمالي التسديدات
   createdAt: string;
@@ -505,6 +506,7 @@ export interface OutletDebtAuditItem {
   totalPaid: number;
   recordedDebt: number;
   expectedDebt: number;
+  creditBalance?: number;
   discrepancy: number;
   isBalanced: boolean;
   creditLimit: number;

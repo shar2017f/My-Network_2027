@@ -1,89 +1,53 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default catch-all
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Connection testing
-    match /test/{docId} {
-      allow read, write: if true;
-    }
-
-    // Print Batches
-    match /batches/{batchId} {
-      allow read, write: if true;
-    }
-
-    // Sheet leaves
-    match /sheets/{sheetId} {
-      allow read, write: if true;
-    }
-
-    // Custody transfers
-    match /transfers/{transferId} {
-      allow read, write: if true;
-    }
-
-    // Outlets
-    match /outlets/{outletId} {
-      allow read, write: if true;
-    }
-
-    // Deliveries
-    match /deliveries/{deliveryId} {
-      allow read, write: if true;
-    }
-
-    // Payments
-    match /payments/{paymentId} {
-      allow read, write: if true;
-    }
-
-    // Direct Sales
-    match /direct_sales/{saleId} {
-      allow read, write: if true;
-    }
-
-    // Cash Handovers
-    match /cash_handovers/{handoverId} {
-      allow read, write: if true;
-    }
-
-    // Settlements
-    match /settlements/{settlementId} {
-      allow read, write: if true;
-    }
-
-    // Damaged Cards
-    match /damaged_cards/{damagedId} {
-      allow read, write: if true;
-    }
-
-    // Audit Logs
-    match /audit_logs/{logId} {
-      allow read, write: if true;
-    }
-
-    // App Settings
-    match /app_settings/{settingId} {
-      allow read, write: if true;
-    }
-
-    // System Data & Sync
+    // قراءة وكتابة آمنة لحالة الشبكة والأحداث الفورية مع التحقق من بنية البيانات ومنع مسح الحالة بالكامل
     match /system_data/{docId} {
-      allow read, write: if true;
+      allow get: if isValidId(docId);
+      allow list: if true;
+      allow create, update: if isValidId(docId)
+                            && request.resource != null
+                            && request.resource.data.keys().size() > 0;
+      allow delete: if false;
     }
 
-    // Live Snapshot Real-time Events
     match /system_events/{eventId} {
-      allow read, write: if true;
+      allow get: if isValidId(eventId);
+      allow list: if true;
+      allow create, update: if isValidId(eventId)
+                            && request.resource != null
+                            && request.resource.data.keys().size() > 0;
+      allow delete: if false;
     }
 
-    // Expenses & Capital Accounts
-    match /expenses/{expenseId} {
-      allow read, write: if true;
+    match /{collectionName}/{docId} {
+      allow get: if isValidId(docId) && collectionName in [
+        'batches', 'sheets', 'transfers', 'outlets',
+        'deliveries', 'payments', 'direct_sales',
+        'cash_handovers', 'settlements', 'damaged_cards',
+        'audit_logs', 'app_settings', 'expenses'
+      ];
+      allow list: if collectionName in [
+        'batches', 'sheets', 'transfers', 'outlets',
+        'deliveries', 'payments', 'direct_sales',
+        'cash_handovers', 'settlements', 'damaged_cards',
+        'audit_logs', 'app_settings', 'expenses'
+      ];
+      allow create, update: if isValidId(docId) && collectionName in [
+        'batches', 'sheets', 'transfers', 'outlets',
+        'deliveries', 'payments', 'direct_sales',
+        'cash_handovers', 'settlements', 'damaged_cards',
+        'audit_logs', 'app_settings', 'expenses'
+      ] && request.resource != null && request.resource.data.keys().size() > 0;
+      allow delete: if false;
     }
   }
 }

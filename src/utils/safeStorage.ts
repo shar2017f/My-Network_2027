@@ -17,28 +17,24 @@ try {
 
 export const safeStorage = {
   getItem(key: string): string | null {
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
+    if (isLocalStorageAvailable) {
+      try {
         const val = window.localStorage.getItem(key);
         if (val !== null) {
           memoryStorage.set(key, val);
           return val;
         }
+      } catch {
+        // Fallback to sessionStorage/memory
       }
-    } catch {
-      // Fallback
     }
     try {
-      if (typeof window !== 'undefined' && window.sessionStorage) {
-        const sessionVal = window.sessionStorage.getItem(key);
-        if (sessionVal !== null) {
-          memoryStorage.set(key, sessionVal);
-          return sessionVal;
-        }
+      const sessionVal = typeof window !== 'undefined' ? window.sessionStorage?.getItem(key) : null;
+      if (sessionVal !== null && sessionVal !== undefined) {
+        memoryStorage.set(key, sessionVal);
+        return sessionVal;
       }
-    } catch {
-      // Fallback
-    }
+    } catch {}
     return memoryStorage.get(key) ?? null;
   },
 

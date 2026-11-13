@@ -898,19 +898,34 @@ export const OutletsView: React.FC = () => {
   };
 
   // Filtered outlets with total null safety
-  const filteredOutlets = (outlets || []).map((o, idx) => ({
-    id: o?.id || `OUT-${idx + 1}`,
-    name: o?.name || `منفذ ${idx + 1}`,
-    ownerName: o?.ownerName || o?.name || 'المالك',
-    phone: o?.phone || '',
-    location: o?.location || 'غير محدد',
-    creditLimit: typeof o?.creditLimit === 'number' && !isNaN(o.creditLimit) ? o.creditLimit : 100000,
-    currentDebt: typeof o?.currentDebt === 'number' && !isNaN(o.currentDebt) ? o.currentDebt : 0,
-    totalDeliveredAmount: typeof o?.totalDeliveredAmount === 'number' && !isNaN(o.totalDeliveredAmount) ? o.totalDeliveredAmount : 0,
-    totalPaidAmount: typeof o?.totalPaidAmount === 'number' && !isNaN(o.totalPaidAmount) ? o.totalPaidAmount : 0,
-    createdAt: o?.createdAt || '2026-10-01',
-    notes: o?.notes || '',
-  })).filter((o) => {
+  const filteredOutlets = (outlets || []).map((o, idx) => {
+    const totalDeliveredAmount =
+      typeof o?.totalDeliveredAmount === 'number' && !isNaN(o.totalDeliveredAmount)
+        ? o.totalDeliveredAmount
+        : 0;
+    const totalPaidAmount =
+      typeof o?.totalPaidAmount === 'number' && !isNaN(o.totalPaidAmount)
+        ? o.totalPaidAmount
+        : 0;
+    const netBalance = totalDeliveredAmount - totalPaidAmount;
+    const currentDebt = Math.max(0, netBalance);
+    const creditBalance = netBalance < 0 ? Math.abs(netBalance) : 0;
+
+    return {
+      id: o?.id || `OUT-${idx + 1}`,
+      name: o?.name || `منفذ ${idx + 1}`,
+      ownerName: o?.ownerName || o?.name || 'المالك',
+      phone: o?.phone || '',
+      location: o?.location || 'غير محدد',
+      creditLimit: typeof o?.creditLimit === 'number' && !isNaN(o.creditLimit) ? o.creditLimit : 100000,
+      currentDebt,
+      creditBalance,
+      totalDeliveredAmount,
+      totalPaidAmount,
+      createdAt: o?.createdAt || '2026-10-01',
+      notes: o?.notes || '',
+    };
+  }).filter((o) => {
     const q = (searchQuery || '').toLowerCase().trim();
     const nameMatch = (o.name || '').toLowerCase().includes(q);
     const ownerMatch = (o.ownerName || '').toLowerCase().includes(q);
@@ -1326,14 +1341,25 @@ export const OutletsView: React.FC = () => {
                     </div>
 
                     <div className="text-left shrink-0">
-                      <span className="text-[10px] text-slate-400 block">الدين الحالي:</span>
-                      <span
-                        className={`font-black text-sm ${
-                          currentDebt > 0 ? 'text-rose-400' : 'text-emerald-400'
-                        }`}
-                      >
-                        {currentDebt.toLocaleString()} ر.ي
-                      </span>
+                      {outlet.creditBalance > 0 ? (
+                        <>
+                          <span className="text-[10px] text-cyan-400 block">رصيد دائن (فائض):</span>
+                          <span className="font-black text-sm text-cyan-300">
+                            +{outlet.creditBalance.toLocaleString()} ر.ي
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-[10px] text-slate-400 block">الدين الحالي:</span>
+                          <span
+                            className={`font-black text-sm ${
+                              currentDebt > 0 ? 'text-rose-400' : 'text-emerald-400'
+                            }`}
+                          >
+                            {currentDebt.toLocaleString()} ر.ي
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
 

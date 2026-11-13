@@ -37,7 +37,9 @@ export const doesRecordMatchOutlet = (
     const normRecord = normalizeArabicName(recordOutletName);
     const normTarget = normalizeArabicName(targetOutlet.name);
 
-    if (normRecord === normTarget) return true;
+    if (normRecord.length >= 5 && normTarget.length >= 5) {
+      if (normRecord === normTarget) return true;
+    }
 
     // Strict matching for established outlets (never cross-match different stores!)
     if (normRecord.includes('ابوشعيب') && normTarget.includes('ابوشعيب')) return true;
@@ -71,6 +73,23 @@ export const doesRecordMatchOutlet = (
 };
 
 /**
+ * Computes net balance, current debt, and credit balance (overpayment) consistently.
+ */
+export const computeOutletBalance = (
+  totalDeliveredAmount: number,
+  totalPaidAmount: number
+): {
+  netBalance: number;
+  currentDebt: number;
+  creditBalance: number;
+} => {
+  const netBalance = totalDeliveredAmount - totalPaidAmount;
+  const currentDebt = Math.max(0, netBalance);
+  const creditBalance = netBalance < 0 ? Math.abs(netBalance) : 0;
+  return { netBalance, currentDebt, creditBalance };
+};
+
+/**
  * Accurately aggregates the financial balance of an outlet directly from
  * its complete list of delivery and payment vouchers.
  */
@@ -87,7 +106,9 @@ export const calculateOutletFinancials = (
   cashAtDelivery: number;
   paymentsReceived: number;
   totalPaidAmount: number;
+  netBalance: number;
   currentDebt: number;
+  creditBalance: number;
 } => {
   const outletDeliveries = allDeliveries.filter((d) =>
     doesRecordMatchOutlet(d.outletId, d.outletName, outlet)
@@ -118,7 +139,10 @@ export const calculateOutletFinancials = (
   }
 
   const totalPaidAmount = cashAtDelivery + paymentsReceived;
-  const currentDebt = Math.max(0, totalDeliveredAmount - totalPaidAmount);
+  const { netBalance, currentDebt, creditBalance } = computeOutletBalance(
+    totalDeliveredAmount,
+    totalPaidAmount
+  );
 
   return {
     deliveriesCount: outletDeliveries.length,
@@ -129,6 +153,8 @@ export const calculateOutletFinancials = (
     cashAtDelivery,
     paymentsReceived,
     totalPaidAmount,
+    netBalance,
     currentDebt,
+    creditBalance,
   };
 };
